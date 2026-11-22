@@ -7,15 +7,15 @@ The goal of Touch Up was to provide a simple, general-purpose driver that enable
 The code in this repository provides a user-space driver that reads and processes the HID data into a set of touches and different utilities to inject mouse events into the system.
 
 ## What can you do with this App?
-The Touch Up **utility app** allows you to control your Mac with any connected touch screen. Touch Up supports clicks, dragging, scrolling, and pinch-to-zoom.
-While the behavior of the driver is customizable, the default setting was inspired by iPadOS:
+The Touch Up **utility app** allows you to control your Mac with any connected touch screen. One finger works directly on what it touches; two or more fingers use the same gestures as a Magic Trackpad, posted as native trackpad events:
 
-- Tap anywhere on the screen to click objects
-- Scroll content by flicking over the screen
-- Drag contents by briefly resting your finger before moving it
-- Zoom content by pinching two fingers
-- Secondary clicks can be performed with two fingers
-- You can even enable touching a window to move it to the front like Stage Manager on iPadOS does
+- **One finger**: tap to click where you touch; move to drag (select text, move windows); rest the finger to press and hold
+- **Two fingers**: scroll with momentum, pinch to zoom, rotate, tap for a secondary click, double-tap for smart zoom, scroll sideways to swipe between pages, swipe in from the right edge for Notification Center
+- **Three fingers**: swipe between full-screen apps, swipe up for Mission Control and down for App Exposé, tap to Look Up (off by default)
+- **Four fingers**: pinch for Launchpad, spread for Show Desktop
+
+Every gesture, and the finger counts for swipes, can be changed in the app's settings, which follow the layout of System Settings › Trackpad.
+The gesture recognition and the native event layout are ported from the T650Native touchpad driver; `Tests/run-tests.sh` runs the tests for the gesture logic.
 
 
 ### Installing the App

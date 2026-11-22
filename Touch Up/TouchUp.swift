@@ -21,19 +21,43 @@ class TouchUp: NSObject, ObservableObject {
     
     @Published var connectionState: ConnectionState = .disconnected
     
-    @Published var holdDuration: TimeInterval = 0.1
+    @Published var longPressDuration: TimeInterval = 0.5 // one finger resting this long presses the button
+    @Published var dragThreshold: CGFloat = 3 // mm one finger travels before it presses the button and drags
     @Published var doubleClickDistance: CGFloat = 3 //mm
-    @Published var stationaryThreshold: CGFloat = 0.2 // accepted jitter [mm] to still count as stationary
     @Published var edgeDeadZone: CGFloat = 0 // border along the screen edges [pt] in which the cursor is never posted
     @Published var errorResistance: NSInteger = 0 // num of Reports to wait before cancelling a touch
     @Published var ignoreOriginTouches: Bool = false
-    
-    @Published var isScrollingWithOneFingerEnabled = false
-    @Published var isSecondaryClickEnabled = false
-    @Published var isMagnificationEnabled = false
-    @Published var isClickWindowToFrontEnabled = false
-    @Published var isClickOnLiftEnabled = false
     @Published var isExclusiveAccessEnabled: Bool = false
+
+    // Trackpad gestures (System Settings > Trackpad). Every change is pushed to the touch manager.
+    @Published var naturalScrolling = true { didSet { applyGestureSettings() } }
+    @Published var scrollMomentum = true { didSet { applyGestureSettings() } }
+    @Published var secondaryClick = true { didSet { applyGestureSettings() } }
+    @Published var lookUp = false { didSet { applyGestureSettings() } }
+    @Published var zoom = true { didSet { applyGestureSettings() } }
+    @Published var smartZoom = true { didSet { applyGestureSettings() } }
+    @Published var rotate = true { didSet { applyGestureSettings() } }
+    @Published var swipeBetweenPages = true { didSet { applyGestureSettings() } }
+    @Published var pagesTrigger: TUCPagesTrigger = .twoFingerScroll {
+        didSet {
+            // Pages and full-screen apps cannot both be three-finger swipes: the one just changed wins, as in macOS.
+            if !isApplyingStoredGestures && pagesTrigger != .twoFingerScroll && fullScreenAppsFingers == 3 { fullScreenAppsFingers = 4 }
+            applyGestureSettings()
+        }
+    }
+    @Published var swipeBetweenFullScreenApps = true { didSet { applyGestureSettings() } }
+    @Published var fullScreenAppsFingers = 3 {
+        didSet {
+            if !isApplyingStoredGestures && fullScreenAppsFingers == 3 && pagesTrigger != .twoFingerScroll { pagesTrigger = .twoFingerScroll }
+            applyGestureSettings()
+        }
+    }
+    @Published var missionControl = true { didSet { applyGestureSettings() } }
+    @Published var appExpose = true { didSet { applyGestureSettings() } }
+    @Published var missionControlFingers = 3 { didSet { applyGestureSettings() } }
+    @Published var launchpad = true { didSet { applyGestureSettings() } }
+    @Published var showDesktop = true { didSet { applyGestureSettings() } }
+    @Published var notificationCenter = true { didSet { applyGestureSettings() } }
 
     @Published var areAdditionalDigitizerRotationSettingsVisible = false
 
@@ -55,6 +79,10 @@ class TouchUp: NSObject, ObservableObject {
 
 
     @Published var isAccessibilityAccessGranted = false
+
+    /// Set while the stored gesture settings are loaded: they are pushed to the touch manager once, at the end, and
+    /// the pages / full-screen apps conflict rule is not applied to them.
+    private var isApplyingStoredGestures = false
 
 
     @objc func screenParametersDidChange() {
@@ -121,25 +149,37 @@ extension TouchUp {
         let defaults = UserDefaults.standard
         
         defaults.register(defaults: [
-            "holdDuration" : 0.1,
+            "longPressDuration" : 0.5,
+            "dragThreshold" : 3,
             "doubleClickDistance" : 8,
-            "stationaryThreshold" : 0.1,
             "edgeDeadZone" : 0,
             "errorResistance" : 4,
             "ignoreOriginTouches" : true,
-
-            "isScrollingWithOneFingerEnabled" : true,
-            "isSecondaryClickEnabled" : true,
-            "isMagnificationEnabled" : true,
-            "isClickWindowToFrontEnabled" : false,
-            "isClickOnLiftEnabled" : false,
             "isExclusiveAccessEnabled" : false,
-            "areAdditionalDigitizerRotationSettingsVisible" : false
+            "areAdditionalDigitizerRotationSettingsVisible" : false,
+
+            "gesture.naturalScrolling" : true,
+            "gesture.scrollMomentum" : true,
+            "gesture.secondaryClick" : true,
+            "gesture.lookUp" : false,
+            "gesture.zoom" : true,
+            "gesture.smartZoom" : true,
+            "gesture.rotate" : true,
+            "gesture.swipeBetweenPages" : true,
+            "gesture.pagesTrigger" : TUCPagesTrigger.twoFingerScroll.rawValue,
+            "gesture.swipeBetweenFullScreenApps" : true,
+            "gesture.fullScreenAppsFingers" : 3,
+            "gesture.missionControl" : true,
+            "gesture.appExpose" : true,
+            "gesture.missionControlFingers" : 3,
+            "gesture.launchpad" : true,
+            "gesture.showDesktop" : true,
+            "gesture.notificationCenter" : true,
         ])
         
-        holdDuration = defaults.double(forKey: "holdDuration")
+        longPressDuration = defaults.double(forKey: "longPressDuration")
+        dragThreshold = defaults.double(forKey: "dragThreshold")
         doubleClickDistance = defaults.double(forKey: "doubleClickDistance")
-        stationaryThreshold = defaults.double(forKey: "stationaryThreshold")
         edgeDeadZone = defaults.double(forKey: "edgeDeadZone")
         errorResistance = defaults.integer(forKey: "errorResistance")
         ignoreOriginTouches = defaults.bool(forKey: "ignoreOriginTouches")
@@ -148,9 +188,9 @@ extension TouchUp {
 
         self.observers = [
             $isPublishingMouseEventsEnabled.assign(to: \.postMouseEvents, on: touchManager),
-            $holdDuration.assign(to: \.holdDuration, on: touchManager),
+            $longPressDuration.assign(to: \.longPressDuration, on: touchManager),
+            $dragThreshold.assign(to: \.dragThreshold, on: touchManager),
             $doubleClickDistance.assign(to: \.doubleClickTolerance, on: touchManager),
-            $stationaryThreshold.assign(to: \.stationaryThreshold, on: touchManager),
             $edgeDeadZone.assign(to: \.edgeDeadZone, on: touchManager),
             $errorResistance.assign(to: \.errorResistance, on: touchManager),
             $ignoreOriginTouches.assign(to: \.ignoreOriginTouches, on: touchManager),
@@ -162,11 +202,28 @@ extension TouchUp {
         
         
         
-        isScrollingWithOneFingerEnabled = defaults.bool(forKey: "isScrollingWithOneFingerEnabled")
-        isSecondaryClickEnabled = defaults.bool(forKey: "isSecondaryClickEnabled")
-        isMagnificationEnabled = defaults.bool(forKey: "isMagnificationEnabled")
-        isClickWindowToFrontEnabled = defaults.bool(forKey: "isClickWindowToFrontEnabled")
-        isClickOnLiftEnabled = defaults.bool(forKey: "isClickOnLiftEnabled")
+        isApplyingStoredGestures = true
+        naturalScrolling = defaults.bool(forKey: "gesture.naturalScrolling")
+        scrollMomentum = defaults.bool(forKey: "gesture.scrollMomentum")
+        secondaryClick = defaults.bool(forKey: "gesture.secondaryClick")
+        lookUp = defaults.bool(forKey: "gesture.lookUp")
+        zoom = defaults.bool(forKey: "gesture.zoom")
+        smartZoom = defaults.bool(forKey: "gesture.smartZoom")
+        rotate = defaults.bool(forKey: "gesture.rotate")
+        swipeBetweenPages = defaults.bool(forKey: "gesture.swipeBetweenPages")
+        swipeBetweenFullScreenApps = defaults.bool(forKey: "gesture.swipeBetweenFullScreenApps")
+        // The conflict rules are off while loading: the stored pair was already resolved when it was saved.
+        pagesTrigger = TUCPagesTrigger(rawValue: defaults.integer(forKey: "gesture.pagesTrigger")) ?? .twoFingerScroll
+        fullScreenAppsFingers = defaults.integer(forKey: "gesture.fullScreenAppsFingers") == 4 ? 4 : 3
+        missionControl = defaults.bool(forKey: "gesture.missionControl")
+        appExpose = defaults.bool(forKey: "gesture.appExpose")
+        missionControlFingers = defaults.integer(forKey: "gesture.missionControlFingers") == 4 ? 4 : 3
+        launchpad = defaults.bool(forKey: "gesture.launchpad")
+        showDesktop = defaults.bool(forKey: "gesture.showDesktop")
+        notificationCenter = defaults.bool(forKey: "gesture.notificationCenter")
+        isApplyingStoredGestures = false
+        applyGestureSettings()
+
         areAdditionalDigitizerRotationSettingsVisible = defaults.bool(forKey: "areAdditionalDigitizerRotationSettingsVisible")
     }
     
@@ -174,22 +231,64 @@ extension TouchUp {
     func savePreferences() {
         let defaults = UserDefaults.standard
         
-        defaults.set(holdDuration, forKey: "holdDuration")
+        defaults.set(longPressDuration, forKey: "longPressDuration")
+        defaults.set(dragThreshold, forKey: "dragThreshold")
         defaults.set(doubleClickDistance, forKey: "doubleClickDistance")
-        defaults.set(stationaryThreshold, forKey: "stationaryThreshold")
         defaults.set(edgeDeadZone, forKey: "edgeDeadZone")
         defaults.set(errorResistance, forKey: "errorResistance")
         defaults.set(ignoreOriginTouches, forKey: "ignoreOriginTouches")
         defaults.set(isExclusiveAccessEnabled, forKey: "isExclusiveAccessEnabled")
 
-        defaults.set(isScrollingWithOneFingerEnabled, forKey: "isScrollingWithOneFingerEnabled")
-        defaults.set(isSecondaryClickEnabled, forKey: "isSecondaryClickEnabled")
-        defaults.set(isMagnificationEnabled, forKey: "isMagnificationEnabled")
-        defaults.set(isClickWindowToFrontEnabled, forKey: "isClickWindowToFrontEnabled")
-        defaults.set(isClickOnLiftEnabled, forKey: "isClickOnLiftEnabled")
+        defaults.set(naturalScrolling, forKey: "gesture.naturalScrolling")
+        defaults.set(scrollMomentum, forKey: "gesture.scrollMomentum")
+        defaults.set(secondaryClick, forKey: "gesture.secondaryClick")
+        defaults.set(lookUp, forKey: "gesture.lookUp")
+        defaults.set(zoom, forKey: "gesture.zoom")
+        defaults.set(smartZoom, forKey: "gesture.smartZoom")
+        defaults.set(rotate, forKey: "gesture.rotate")
+        defaults.set(swipeBetweenPages, forKey: "gesture.swipeBetweenPages")
+        defaults.set(pagesTrigger.rawValue, forKey: "gesture.pagesTrigger")
+        defaults.set(swipeBetweenFullScreenApps, forKey: "gesture.swipeBetweenFullScreenApps")
+        defaults.set(fullScreenAppsFingers, forKey: "gesture.fullScreenAppsFingers")
+        defaults.set(missionControl, forKey: "gesture.missionControl")
+        defaults.set(appExpose, forKey: "gesture.appExpose")
+        defaults.set(missionControlFingers, forKey: "gesture.missionControlFingers")
+        defaults.set(launchpad, forKey: "gesture.launchpad")
+        defaults.set(showDesktop, forKey: "gesture.showDesktop")
+        defaults.set(notificationCenter, forKey: "gesture.notificationCenter")
         defaults.set(areAdditionalDigitizerRotationSettingsVisible, forKey: "areAdditionalDigitizerRotationSettingsVisible")
     }
 
+}
+
+
+// MARK: - Trackpad Gestures
+extension TouchUp {
+
+    /// Hands the current gesture switches to the touch manager (it keeps a copy).
+    func applyGestureSettings() {
+        if isApplyingStoredGestures { return }
+
+        let s = TUCGestureSettings()
+        s.naturalScrolling = naturalScrolling
+        s.scrollMomentum = scrollMomentum
+        s.secondaryClick = secondaryClick
+        s.lookUp = lookUp
+        s.zoom = zoom
+        s.smartZoom = smartZoom
+        s.rotate = rotate
+        s.swipeBetweenPages = swipeBetweenPages
+        s.pagesTrigger = pagesTrigger
+        s.swipeBetweenFullScreenApps = swipeBetweenFullScreenApps
+        s.fullScreenAppsFingers = fullScreenAppsFingers
+        s.missionControl = missionControl
+        s.appExpose = appExpose
+        s.missionControlFingers = missionControlFingers
+        s.launchpad = launchpad
+        s.showDesktop = showDesktop
+        s.notificationCenter = notificationCenter
+        touchManager.gestureSettings = s
+    }
 }
 
 
@@ -324,39 +423,6 @@ extension TouchUp: TUCTouchDelegate {
         digitizerConfigs[locationID]?.additionalRotation ?? 0
     }
     
-    func action(for gesture: TUCCursorGesture) -> TUCCursorAction {
-        switch gesture {
-        case .TUCCursorGestureTouchDown:
-            return isClickWindowToFrontEnabled ? .moveClickIfNeeded : .move
-            
-        case .TUCCursorGestureTap:
-            return .click
-            
-        case .TUCCursorGestureLongPress:
-            return .click
-            
-        case .TUCCursorGestureDrag:
-            return isClickOnLiftEnabled ? .pointAndClick : (isScrollingWithOneFingerEnabled ? .scroll : .move)
-            
-        case .TUCCursorGestureHoldAndDrag:
-            return .drag
-            
-        case .TUCCursorGestureTapSecondFinger:
-            return isSecondaryClickEnabled ? .secondaryClick : .none
-            
-        case .TUCCursorGestureTwoFingerDrag:
-            return isScrollingWithOneFingerEnabled ? .drag : .scroll
-            
-        case .TUCCursorGesturePinch:
-            return isMagnificationEnabled ? .magnify : .none
-            
-        default:
-            return .none
-        }
-    }
-    
-    
-    
     func touchscreenDidConnect(withLocationID locationID: UInt32) {
         self.connectedDigitizers.append(Digitizer(locationID: locationID))
 
@@ -389,37 +455,17 @@ extension TouchUp {
             return("Control Mouse with Touch",
                    "Turns the driver on or off.")
             
-        case \.isScrollingWithOneFingerEnabled:
-            return("Scroll with one finger",
-                   "Scroll by dragging one finger over the touchscreen. If this option is disabled, you will move the cursor instead.")
-            
-        case \.isSecondaryClickEnabled:
-            return("Secondary Click",
-                   "While your pointing finger is resting on the screen, tap another finger in proximity to it to generate a secondary click event at the location of the first finger.")
-            
-        case \.isMagnificationEnabled:
-            return("Magnification",
-                   "Pinch two fingers to increase or decrease the size of the content. (EXPERIMENTAL)")
-            
-        case \.isClickWindowToFrontEnabled:
-            return("Bring Windows to Front",
-                   "When touching a window that is not frontmost, bring it to front first. (EXPERIMENTAL)")
-            
-        case \.isClickOnLiftEnabled:
-            return("Point and click",
-                   "Very reduced input set for exhibits: Move cursor by dragging, and click by releasing. Overrides scrolling and dragging functionality.")
-            
-        case \.holdDuration:
-            return("Hold Duration",
-                   "How long do you have to hold finger to initiate hold&drag")
-            
+        case \.longPressDuration:
+            return("Press and Hold Delay",
+                   "How long one finger has to rest on the screen before it presses the mouse button, for menus that open on press and hold. Moving the finger presses it at once.")
+
+        case \.dragThreshold:
+            return("Drag Threshold",
+                   "How far (mm) one finger has to move before it drags. Lifting before that is a click. Increase it if taps turn into small drags.")
+
         case \.doubleClickDistance:
             return("Double Click Zone",
                    "How many mm can two taps be apart from each other to qualify double click")
-
-        case \.stationaryThreshold:
-            return("Jitter Tolerance",
-                   "Increase, if taps and long presses are not registering reliably; decrease for more responsive dragging.")
 
         case \.edgeDeadZone:
             return("Edge Dead Zone",

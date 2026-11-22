@@ -9,6 +9,7 @@
 #import <TouchUpCore/TUCTouchInputManager-C.h>
 #import <TouchUpCore/TUCTouchDelegate.h>
 #import <TouchUpCore/TUCTouch.h>
+#import <TouchUpCore/TUCGestureSettings.h>
 
 NS_ASSUME_NONNULL_BEGIN
 
@@ -24,7 +25,12 @@ NS_ASSUME_NONNULL_BEGIN
  Allows to deactiate that the framework processes touches to post them as mouse events.
  The default value is YES.
  */
-@property BOOL postMouseEvents;
+@property (nonatomic) BOOL postMouseEvents;
+
+/**
+ Which Magic Trackpad style gestures are on. Copied on set.
+ */
+@property (copy, nonatomic) TUCGestureSettings *gestureSettings;
 
 
 /**
@@ -33,14 +39,20 @@ NS_ASSUME_NONNULL_BEGIN
 @property CGFloat doubleClickTolerance;
 
 /**
- How long the user has to hold before a drag gesture turns into holdAndDrag.
+ How long one finger has to rest without moving before it presses the mouse button (press and hold).
+ The default value is 0.5 s.
  */
-@property NSTimeInterval holdDuration;
+@property (nonatomic) NSTimeInterval longPressDuration;
+
+/**
+ How far in mm one finger has to travel before it presses the mouse button and drags.
+ Below this, lifting the finger is a click. The default value is 3 mm.
+ */
+@property (nonatomic) CGFloat dragThreshold;
 
 /**
  The maximum distance in mm a touch may travel between two reports while still counting as
- stationary. Larger values tolerate more finger jitter before a touch is treated as moving
- (which is what disqualifies a tap and starts a drag).
+ stationary. Only affects the phase shown for each touch in the debug view.
  */
 @property CGFloat stationaryThreshold;
 

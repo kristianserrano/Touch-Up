@@ -37,11 +37,6 @@ NS_ASSUME_NONNULL_BEGIN
  */
 - (nullable TUCScreen *)touchscreenForLocationID:(uint32_t)locationID;
 
-/**
- Used to customize which mouse events are posted by the input manager.
- */
-- (TUCCursorAction)actionForGesture:(TUCCursorGesture)gesture;
-
 - (CGFloat)digitizerRotationForLocationID:(uint32_t)locationID;
 
 @end

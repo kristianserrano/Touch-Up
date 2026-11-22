@@ -279,10 +279,14 @@ void StoreInputValue(HIDDeviceState *device, IOHIDValueRef hidValue) {
  */
 void IdentifyElements(HIDDeviceState *device, IOHIDElementRef anyElement, Boolean printTree) {
     
+    // Walk up to the *application* collection (the touchscreen itself). Stopping at the first collection on the way
+    // is wrong when the first value to arrive belongs to a finger: that is the finger's logical collection, which holds
+    // no finger collections, so every report would decode as zero fingers. Which value arrives first varies by launch.
     IOHIDElementRef applicationCollection = anyElement;
-    IOHIDElementType type = kIOHIDElementTypeOutput;
-    
-    while (type != kIOHIDElementTypeCollection) {
+    IOHIDElementType type = IOHIDElementGetType(applicationCollection);
+
+    while (!(type == kIOHIDElementTypeCollection
+             && IOHIDElementGetCollectionType(applicationCollection) == kIOHIDElementCollectionTypeApplication)) {
         IOHIDElementRef next = IOHIDElementGetParent(applicationCollection);
         if (next) {
             applicationCollection = next;
@@ -776,6 +780,7 @@ static CFMutableDictionaryRef CreateDeviceMatchingDictionary(UInt32 inUsagePage,
 
 void OpenHIDManager(void *delegate) {
     gTouchManager = delegate;
+    setvbuf(stdout, NULL, _IOLBF, 0);  // the diagnostics below reach a redirected stdout as they happen
     
     
     gHidManager = IOHIDManagerCreate(kCFAllocatorDefault, kIOHIDOptionsTypeNone);
@@ -813,7 +818,16 @@ void OpenHIDManager(void *delegate) {
                                     kCFRunLoopCommonModes);
     
     IOHIDOptionsType openOptions = gSeizeTouchDevices ? kIOHIDOptionsTypeSeizeDevice : kIOHIDOptionsTypeNone;
-    IOHIDManagerOpen(gHidManager, openOptions);
+    IOReturn openResult = IOHIDManagerOpen(gHidManager, openOptions);
+    IOHIDAccessType listenAccess = IOHIDCheckAccess(kIOHIDRequestTypeListenEvent);
+    printf("IOHIDManagerOpen: 0x%08x, Input Monitoring: %s\n", openResult,
+           listenAccess == kIOHIDAccessTypeGranted ? "granted" : listenAccess == kIOHIDAccessTypeDenied ? "denied" : "not decided");
+
+    if (openResult != kIOReturnSuccess && listenAccess != kIOHIDAccessTypeGranted) {
+        // macOS refused the touchscreen: ask for Input Monitoring, so it shows its prompt (a grant applies at the next launch).
+        printf("Requesting Input Monitoring access\n");
+        IOHIDRequestAccess(kIOHIDRequestTypeListenEvent);
+    }
 }
 
 

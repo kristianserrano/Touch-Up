@@ -524,6 +524,192 @@ static void testClickCounter(void) {
 }
 
 
+
+#pragma mark - Replays of real strokes
+
+/// One stroke from a recording (Touch Up run with TOUCHUP_RECORD=1): the frames from first contact to all lifted.
+typedef struct {
+    NSInteger swipesBegan;      // how many swipes the recognizer began with the stroke's final finger count
+    NSInteger fingers;          // of the last swipe
+    TUCSwipeAxis axis;
+    double travel;              // the last swipe's travel when it ended
+    BOOL committed;             // the native swipe it became ended committed (phase 4), with the given settings
+    BOOL posted;                // anything native was posted for it
+} StrokeOutcome;
+
+static NSArray<NSArray<NSString *> *> *LoadStrokes(NSString *path) {
+    NSString *text = [NSString stringWithContentsOfFile:path encoding:NSUTF8StringEncoding error:nil];
+    NSMutableArray *strokes = [NSMutableArray new];
+    NSMutableArray *current = nil;
+    for (NSString *line in [text componentsSeparatedByString:@"\n"]) {
+        NSArray<NSString *> *p = [line componentsSeparatedByString:@" "];
+        if (p.count < 3 || ![p[0] isEqualToString:@"F"]) continue;
+        if (p[2].integerValue > 0) {
+            if (current == nil) { current = [NSMutableArray new]; [strokes addObject:current]; }
+            [current addObject:line];
+        } else if (current != nil) {
+            [current addObject:line];
+            current = nil;
+        }
+    }
+    return strokes;
+}
+
+static StrokeOutcome ReplayStroke(NSArray<NSString *> *frames, TUCGestureSettings *settings, CGSize scale, NSInteger fingers) {
+    TUCGestureRecognizer *r = [TUCGestureRecognizer new];
+    [r applySettings:settings];
+    TUCSwipeTranslator *t = [TUCSwipeTranslator new];
+    t.settings = settings;
+    StrokeOutcome o = {0};
+    double lastTime = 0;
+
+    NSMutableArray<NSString *> *all = [frames mutableCopy];
+    NSArray<NSString *> *lastParts = [all.lastObject componentsSeparatedByString:@" "];
+    if (lastParts[2].integerValue != 0) [all addObject:[NSString stringWithFormat:@"F %f 0", lastParts[1].doubleValue + 0.008]];
+
+    for (NSString *line in all) {
+        NSArray<NSString *> *p = [line componentsSeparatedByString:@" "];
+        double now = p[1].doubleValue;
+        lastTime = now;
+        NSInteger n = p[2].integerValue;
+        TUCContact contacts[16];
+        for (NSInteger i = 0; i < n && i < 16; i++) {
+            NSArray<NSString *> *idAndXY = [p[3 + i] componentsSeparatedByString:@":"];
+            NSArray<NSString *> *xy = [idAndXY[1] componentsSeparatedByString:@","];
+            contacts[i].identifier = idAndXY[0].integerValue;
+            contacts[i].mm = CGPointMake(xy[0].doubleValue * scale.width, xy[1].doubleValue * scale.height);
+            contacts[i].point = CGPointMake(xy[0].doubleValue * 1.51, xy[1].doubleValue * 1.57);  // 1024 x 600 points over 677 x 381
+        }
+        for (NSValue *v in [r handleContacts:(n ? contacts : NULL) count:n time:now screenWidthMM:677 * scale.width pointsPerMM:1024 / (677 * scale.width)]) {
+            TUCGestureEvent e = TUCGestureEventFromValue(v);
+            if (e.kind != TUCGestureKindSwipe || e.fingers < 3) continue;
+            // A three-finger swipe that a late fourth finger takes over is cancelled and restarted: count only the final one.
+            if (e.phase == TUCGesturePhaseBegan && e.fingers == fingers) o.swipesBegan++;
+            o.fingers = e.fingers;
+            o.axis = e.axis;
+            o.travel = e.value;
+            for (NSValue *nv in [t translatePhase:e.phase fingers:e.fingers axis:e.axis travel:e.value now:now]) {
+                TUCNativeSwipeEvent native = Native(nv);
+                o.posted = YES;
+                if (native.phase == TUCPhaseEnded) o.committed = YES;
+                if (native.phase == TUCPhaseCancelled) o.committed = NO;
+            }
+        }
+    }
+    (void)lastTime;
+    return o;
+}
+
+/// Real strokes on a 7" 1024 x 600 JRP7813S (USB2IIC_CTP_CONTROL controller), which drops a contact for 40-200 ms now
+/// and then and lands fingers up to ~130 ms apart. Labelled from their net movement.
+///
+/// The panel's EDID claims 677 x 381 mm (31"), and the recording was made in those units; the real visible area is
+/// about 154 x 86 mm, so the frames are scaled to it (the "Screen size" setting does the same in the app).
+static void testRecordedMultiFingerStrokes(void) {
+    NSString *path = [[NSString stringWithUTF8String:__FILE__].stringByDeletingLastPathComponent
+                      stringByAppendingPathComponent:@"Fixtures/jrp7813s-multifinger-20261122.txt"];
+    NSArray<NSArray<NSString *> *> *strokes = LoadStrokes(path);
+    currentTest = @"recording loads";
+    CHECK(strokes.count == 24, @"strokes: %lu", strokes.count);
+    if (strokes.count != 24) return;
+
+    // Swipes routed for the finger counts each stroke used, so every one of them should post and commit.
+    TUCGestureSettings *threeFingers = [TUCGestureSettings defaultSettings];
+    TUCGestureSettings *fourFingers = [TUCGestureSettings defaultSettings];
+    fourFingers.missionControlFingers = 4;
+
+    struct { int index; NSInteger fingers; TUCSwipeAxis axis; int sign; const char *label; } expected[] = {
+        { 2, 3, TUCSwipeAxisHorizontal, -1, "3-finger left" },
+        { 7, 3, TUCSwipeAxisHorizontal, -1, "3-finger left" },
+        { 8, 3, TUCSwipeAxisHorizontal, -1, "3-finger left" },
+        { 9, 3, TUCSwipeAxisHorizontal, -1, "3-finger left" },
+        { 4, 3, TUCSwipeAxisHorizontal, +1, "3-finger right" },
+        { 5, 3, TUCSwipeAxisHorizontal, +1, "3-finger right" },
+        { 6, 3, TUCSwipeAxisHorizontal, +1, "3-finger right" },
+        { 3, 4, TUCSwipeAxisVertical, -1, "4-finger up (a contact drops out)" },
+        { 10, 4, TUCSwipeAxisVertical, -1, "4-finger up (a contact drops out)" },
+        { 11, 4, TUCSwipeAxisVertical, -1, "4-finger up (a contact drops out)" },
+        { 12, 4, TUCSwipeAxisVertical, -1, "4-finger up (fourth lands 130 ms late)" },
+        { 13, 4, TUCSwipeAxisPinch, -1, "4-finger pinch in" },
+        { 14, 4, TUCSwipeAxisPinch, -1, "4-finger pinch in" },
+        { 15, 4, TUCSwipeAxisPinch, -1, "4-finger pinch in" },
+        { 17, 4, TUCSwipeAxisPinch, -1, "4-finger pinch in" },
+        { 18, 4, TUCSwipeAxisPinch, +1, "4-finger spread" },
+        { 19, 4, TUCSwipeAxisPinch, +1, "4-finger spread" },
+        { 20, 4, TUCSwipeAxisPinch, +1, "4-finger spread (a contact drops out)" },
+        { 21, 4, TUCSwipeAxisPinch, +1, "4-finger spread" },
+        { 22, 4, TUCSwipeAxisPinch, +1, "4-finger spread" },
+        { 23, 4, TUCSwipeAxisPinch, +1, "4-finger spread (a contact drops out)" },
+    };
+
+    BOOL verbose = getenv("REPLAY_VERBOSE") != NULL;
+    for (size_t i = 0; i < sizeof(expected) / sizeof(expected[0]); i++) {
+        currentTest = [NSString stringWithFormat:@"stroke %d: %s", expected[i].index, expected[i].label];
+        StrokeOutcome o = ReplayStroke(strokes[expected[i].index], expected[i].fingers == 4 ? fourFingers : threeFingers,
+                                       CGSizeMake(154.0 / 677.0, 86.0 / 381.0), expected[i].fingers);
+        if (verbose) {
+            printf("  stroke %2d %-38s began=%ld fingers=%ld axis=%ld travel=%7.1f posted=%d committed=%d\n", expected[i].index, expected[i].label,
+                   (long)o.swipesBegan, (long)o.fingers, (long)o.axis, o.travel, o.posted, o.committed);
+        }
+        CHECK(o.fingers == expected[i].fingers && o.axis == expected[i].axis, @"got fingers %ld axis %ld", (long)o.fingers, (long)o.axis);
+        CHECK(o.swipesBegan == 1, @"one swipe per stroke, got %ld", (long)o.swipesBegan);
+        CHECK(o.travel * expected[i].sign > 5, @"travel %.1f mm", o.travel);
+        CHECK(o.posted && o.committed, @"posted %d committed %d", o.posted, o.committed);
+    }
+}
+
+/// Real two-finger taps on the same screen (recorded at 7" scale): both fingers are down together for 0-57 ms, often
+/// less than the time a finger count takes to settle. Each must still be a two-finger tap.
+static void testRecordedTwoFingerTaps(void) {
+    NSString *path = [[NSString stringWithUTF8String:__FILE__].stringByDeletingLastPathComponent
+                      stringByAppendingPathComponent:@"Fixtures/jrp7813s-two-finger-taps-20261122.txt"];
+    NSArray<NSArray<NSString *> *> *strokes = LoadStrokes(path);
+    currentTest = @"recorded two-finger taps";
+    CHECK(strokes.count == 24, @"strokes: %lu", strokes.count);
+
+    NSInteger twoFingerTaps = 0, otherTaps = 0;
+    for (NSArray<NSString *> *stroke in strokes) {
+        TUCGestureRecognizer *r = [TUCGestureRecognizer new];
+        NSMutableArray<NSString *> *frames = [stroke mutableCopy];
+        if (![[frames.lastObject componentsSeparatedByString:@" "][2] isEqualToString:@"0"]) {
+            [frames addObject:[NSString stringWithFormat:@"F %f 0", [[frames.lastObject componentsSeparatedByString:@" "][1] doubleValue] + 0.03]];
+        }
+        for (NSString *line in frames) {
+            NSArray<NSString *> *p = [line componentsSeparatedByString:@" "];
+            NSInteger n = p[2].integerValue;
+            TUCContact contacts[16];
+            for (NSInteger i = 0; i < n && i < 16; i++) {
+                NSArray<NSString *> *idAndXY = [p[3 + i] componentsSeparatedByString:@":"];
+                NSArray<NSString *> *xy = [idAndXY[1] componentsSeparatedByString:@","];
+                contacts[i].identifier = idAndXY[0].integerValue;
+                contacts[i].mm = CGPointMake(xy[0].doubleValue, xy[1].doubleValue);
+                contacts[i].point = CGPointMake(xy[0].doubleValue * 6.65, xy[1].doubleValue * 6.65);
+            }
+            for (NSValue *v in [r handleContacts:(n ? contacts : NULL) count:n time:p[1].doubleValue screenWidthMM:154 pointsPerMM:6.65]) {
+                TUCGestureEvent e = TUCGestureEventFromValue(v);
+                if (e.kind != TUCGestureKindTap) continue;
+                if (e.fingers == 2) twoFingerTaps++; else otherTaps++;
+            }
+        }
+    }
+    CHECK(twoFingerTaps == 24 && otherTaps == 0, @"two-finger taps %ld, other taps %ld", (long)twoFingerTaps, (long)otherTaps);
+}
+
+static void testQuickTwoFingerTapIsStillTwoFingers(void) {
+    currentTest = @"one-frame two-finger tap";
+    Driver *d = [Driver new];
+    [d frame:@[@[@1, @50, @60], @[@2, @70, @60]]];
+    [d lift];
+    CHECK([d ofKind:TUCGestureKindTap].count == 1 && [d first:TUCGestureKindTap].fingers == 2, @"a two-finger tap shorter than the settle time is still two fingers");
+
+    currentTest = @"one-finger tap with a one-frame second contact late in a long touch stays a click";
+    Driver *e = [Driver new];
+    [e hold:@[@[@1, @50, @60]] frames:20];
+    [e frame:@[@[@1, @50, @60], @[@2, @52, @61]]];
+    [e lift];
+    CHECK(![e has:TUCGestureKindTap] || [e first:TUCGestureKindTap].fingers == 1, @"got a %ld-finger tap", (long)[e first:TUCGestureKindTap].fingers);
+}
+
 int main(void) {
     @autoreleasepool {
         testOneFingerTapClicksWhereItLanded();
@@ -549,6 +735,9 @@ int main(void) {
         testDockBlockInsertion();
         testMomentumCoastsAndStops();
         testClickCounter();
+        testRecordedMultiFingerStrokes();
+        testRecordedTwoFingerTaps();
+        testQuickTwoFingerTapIsStillTwoFingers();
 
         printf("%d checks, %d failed\n", checks, failures);
         return failures == 0 ? 0 : 1;

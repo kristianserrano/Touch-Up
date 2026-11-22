@@ -79,7 +79,44 @@ struct DigitizerMappingView: View {
 
                 screenPicker(for: digitizer)
             }
+
+            HStack(spacing: 8) {
+                Text("Screen size")
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+                Spacer()
+                sizePicker(for: digitizer)
+            }
         }
+    }
+
+    /// Gesture distances are in millimetres, so they depend on the screen's real size. Some panels report a wrong one.
+    @ViewBuilder
+    private func sizePicker(for digitizer: Digitizer) -> some View {
+        let current = model.digitizerConfigs[digitizer.locationID]?.screenDiagonalInches ?? 0
+        let selection = Binding {
+            current
+        } set: { inches in
+            model.setScreenDiagonal(inches > 0 ? inches : nil, forDigitizer: digitizer.locationID)
+        }
+        let presets: [Double] = [7, 8, 10.1, 11.6, 13.3, 14, 15.6, 17.3, 19, 21.5, 23.8, 27, 32]
+        let reported = model.reportedDiagonalInches(forDigitizer: digitizer.locationID)
+
+        Picker(selection: selection) {
+            Text(reported.map { String(format: "As reported (%.1f″)", $0) } ?? "As reported").tag(0.0)
+            Divider()
+            ForEach(presets, id: \.self) { inches in
+                Text(String(format: inches == inches.rounded() ? "%.0f″" : "%.1f″", inches)).tag(inches)
+            }
+            if current > 0 && !presets.contains(current) {
+                Text(String(format: "%.1f″", current)).tag(current)
+            }
+        } label: {
+            EmptyView()
+        }
+        .labelsHidden()
+        .pickerStyle(.menu)
+        .fixedSize()
     }
 
     @ViewBuilder

@@ -94,6 +94,7 @@ static CGPoint TUCCentroidPoint(const TUCContact *contacts, NSInteger count) {
     BOOL candidateHasStart;
     TUCCentre candidateStart;          // where the fingers were when the current count first appeared
     NSInteger tapFingers;              // the largest settled count
+    NSInteger landingFingers;          // the most fingers down at once while the touch was landing (quick taps never settle)
     BOOL multiTouched;                 // 2+ fingers settled at some point
     double maxTravelMM;                // the furthest any finger got from where it landed
     CGPoint tapPoint;                  // where the first finger landed
@@ -177,6 +178,7 @@ static const NSInteger TUCMaxSwipeFingers = 4;  // more fingers than this do not
         _rotateBias = 0.9;
         _multiPinchBias = 0.5;
         _dragUpgradeSeconds = 0.3;
+        _tapLandingSeconds = 0.1;
 
         _pagesWithTwoFingers = YES;
         _threeFingerVertical = YES;
@@ -219,6 +221,12 @@ static const NSInteger TUCMaxSwipeFingers = 4;  // more fingers than this do not
         s->tapPoint = contacts[0].point;
         _session = s;
         [events addObject:TUCWrapEvent(TUCEventAt(TUCGestureKindTouchBegan, contacts[0].point))];
+    }
+
+    // A quick tap can be over before its finger count settles: both fingers of a two-finger tap are often down
+    // together for less than settleSeconds. Remember how many were down while the touch was landing.
+    if (now - s->startTime <= self.tapLandingSeconds) {
+        s->landingFingers = MAX(s->landingFingers, rawCount);
     }
 
     // Where each finger landed, and how far any finger has got from there (for taps).
@@ -625,6 +633,9 @@ static const NSInteger TUCMaxSwipeFingers = 4;  // more fingers than this do not
 
     double duration = now - s->startTime;
     NSInteger fingers = MAX(s->tapFingers, 1);
+    if (duration <= self.tapMaxDuration) {
+        fingers = MAX(fingers, s->landingFingers);
+    }
     if (fingers == 1) {
         // A lone finger that never moved past the slop or reached the long press: a click where it touched.
         if (!s->multiTouched) {

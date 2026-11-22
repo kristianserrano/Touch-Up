@@ -73,6 +73,7 @@ typedef struct {
 @property double rotateBias;             // two fingers: rotation arc must beat translation by this factor
 @property double multiPinchBias;         // four or more fingers: the same, lower (a thumb closing on three fingers moves the centroid)
 @property double dragUpgradeSeconds;     // a three-finger swipe this young that gets a fourth finger was a four-finger one
+@property double tapLandingSeconds;      // fingers down together within this long of the first count for a quick tap
 
 #pragma mark Switches (from the settings)
 

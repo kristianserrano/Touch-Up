@@ -17,11 +17,18 @@
 
 @property NSMutableDictionary<NSNumber *, NSNumber *> *frameIDsByLocationID;
 
+/// Bumped on every report per digitizer; a lift check scheduled after a report only acts if no report came since.
+@property NSMutableDictionary<NSNumber *, NSNumber *> *reportGenerationByLocationID;
+
 /// One recognizer per digitizer, so fingers on two touchscreens never form one gesture.
 @property NSMutableDictionary<NSNumber *, TUCGestureRecognizer *> *recognizersByLocationID;
 
 /// Shared by all digitizers: there is one cursor.
 @property (strong) TUCGestureOutput *output;
+
+/// Set TOUCHUP_RECORD=1 in the environment to print every frame and recognised event to stdout, for replaying real
+/// strokes in Tests/ (e.g. `open --env TOUCHUP_RECORD=1 --stdout frames.txt "Touch Up.app"`).
+@property BOOL recordFrames;
 
 @end
 
@@ -136,6 +143,38 @@
     self.frameIDsByLocationID[@(locationID)] = @(currentFrameID + 1);
 
     [self processFrameForLocationID:locationID];
+    [self scheduleLiftCheckForLocationID:locationID];
+}
+
+
+/**
+ Some touchscreens stop sending reports when the last fingers lift, without a final "tip up" for each of them. The
+ touches would then stay down until the next touch, mixing with its fingers (and a gesture session would never end).
+ A touchscreen reports every few ms while anything touches it, even a finger held still, so silence means no fingers.
+ */
+static const NSTimeInterval TUCLiftTimeout = 0.35;
+
+- (void)scheduleLiftCheckForLocationID:(uint32_t)locationID {
+    NSInteger generation = self.reportGenerationByLocationID[@(locationID)].integerValue + 1;
+    self.reportGenerationByLocationID[@(locationID)] = @(generation);
+
+    __weak TUCTouchInputManager *weakSelf = self;
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(TUCLiftTimeout * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+        TUCTouchInputManager *strongSelf = weakSelf;
+        if (strongSelf == nil || strongSelf.reportGenerationByLocationID[@(locationID)].integerValue != generation) return;
+
+        BOOL lifted = NO;
+        for (TUCTouch *touch in [strongSelf activeTouches]) {
+            if (touch.locationID != locationID) continue;
+            [touch setPhase:NSTouchPhaseEnded];
+            [strongSelf removeTouch:touch now:NO];
+            lifted = YES;
+        }
+        if (lifted) {
+            [strongSelf.delegate touchesDidChange];
+            [strongSelf processFrameForLocationID:locationID];  // no fingers: ends the gesture
+        }
+    });
 }
 
 
@@ -154,16 +193,9 @@
 
     NSArray<TUCTouch *> *touches = [[[self activeTouches] allObjects] sortedArrayUsingSelector:@selector(compareWithAnotherTouch:)];
 
-    // Millimetres on the glass, for the gesture thresholds. Without a physical size (no EDID), assume ~100 dpi.
-    CGSize physical = screen.nativePhysicalSize;
-    CGFloat pointsPerMM = [screen pixelsPerMM];
-    if (physical.width <= 0 || physical.height <= 0) {
-        pointsPerMM = 4;
-        physical = CGSizeMake(screen.frame.size.width / pointsPerMM, screen.frame.size.height / pointsPerMM);
-    }
-    if (!(pointsPerMM > 0)) {
-        pointsPerMM = screen.frame.size.width / physical.width;
-    }
+    // Millimetres on the glass, for the gesture thresholds.
+    CGSize physical = [self physicalSizeForLocationID:locationID screen:screen];
+    CGFloat pointsPerMM = screen.frame.size.width / physical.width;
 
     TUCContact *contacts = calloc(MAX(touches.count, 1), sizeof(TUCContact));
     NSInteger count = 0;
@@ -183,6 +215,17 @@
                                                                                       time:now
                                                                              screenWidthMM:physical.width
                                                                                pointsPerMM:pointsPerMM];
+    if (self.recordFrames) {
+        printf("F %.4f %ld", now, (long)count);
+        for (NSInteger i = 0; i < count; i++) {
+            printf(" %ld:%.2f,%.2f", (long)contacts[i].identifier, contacts[i].mm.x, contacts[i].mm.y);
+        }
+        printf("\n");
+        for (NSValue *value in events) {
+            TUCGestureEvent e = TUCGestureEventFromValue(value);
+            printf("E kind=%ld fingers=%ld phase=%ld axis=%ld value=%.2f\n", (long)e.kind, (long)e.fingers, (long)e.phase, (long)e.axis, e.value);
+        }
+    }
     free(contacts);
 
     for (NSValue *value in events) {
@@ -222,7 +265,7 @@
     if(touch.previousPhase != NSTouchPhaseEnded && !isNewTouch) {
         // Stationary or moving (shown in the debug view). Convert each axis to mm first (x scales with the panel
         // width, y with its height), then take the distance, so a non-square screen does not distort the threshold.
-        CGSize physicalSize = [self touchscreenForLocationID:locationID].nativePhysicalSize;
+        CGSize physicalSize = [self physicalSizeForLocationID:locationID screen:[self touchscreenForLocationID:locationID]];
         CGFloat dxMM = (touch.location.x - touch.previousLocation.x) * physicalSize.width;
         CGFloat dyMM = (touch.location.y - touch.previousLocation.y) * physicalSize.height;
         CGFloat movedDistanceMM = sqrt(dxMM * dxMM + dyMM * dyMM);
@@ -369,6 +412,24 @@
 
 
 
+/**
+ The visible area in mm: the user's size for this touchscreen if they gave one, else the display's own (EDID), else
+ ~100 dpi as a guess.
+ */
+- (CGSize)physicalSizeForLocationID:(uint32_t)locationID screen:(TUCScreen *)screen {
+    if ([self.delegate respondsToSelector:@selector(physicalSizeForLocationID:)]) {
+        CGSize size = [self.delegate physicalSizeForLocationID:locationID];
+        if (size.width > 0 && size.height > 0) return size;
+    }
+
+    CGSize native = screen.nativePhysicalSize;
+    if (native.width > 0 && native.height > 0) return native;
+
+    return CGSizeMake(screen.frame.size.width / 4, screen.frame.size.height / 4);
+}
+
+
+
 - (TUCScreen *)touchscreenForLocationID:(uint32_t)locationID {
     if (self.delegate != nil) {
         return [self.delegate touchscreenForLocationID:locationID];
@@ -387,7 +448,10 @@
         self.touchSet = [NSMutableSet new];
         self.frameIDsByLocationID = [NSMutableDictionary new];
         self.recognizersByLocationID = [NSMutableDictionary new];
+        self.reportGenerationByLocationID = [NSMutableDictionary new];
         self.output = [TUCGestureOutput new];
+        self.recordFrames = getenv("TOUCHUP_RECORD") != NULL;
+        if (self.recordFrames) setvbuf(stdout, NULL, _IOLBF, 0);
 
         _postMouseEvents = YES;
         self.gestureSettings = [TUCGestureSettings defaultSettings];

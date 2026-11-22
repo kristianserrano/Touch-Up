@@ -346,6 +346,21 @@ extension TouchUp {
         persistMapping(forLocationID: locationID)
     }
 
+    /// Sets the touchscreen's real diagonal (user action; nil = use the size the display reports) and persists it.
+    func setScreenDiagonal(_ inches: Double?, forDigitizer locationID: HIDLocationID) {
+        guard var config = digitizerConfigs[locationID] else { return }
+        config.screenDiagonalInches = inches
+        digitizerConfigs[locationID] = config
+        persistMapping(forLocationID: locationID)
+    }
+
+    /// The diagonal the display itself reports (EDID), in inches, or nil if it reports none.
+    func reportedDiagonalInches(forDigitizer locationID: HIDLocationID) -> Double? {
+        guard let size = resolvedMapping(forLocationID: locationID).screen?.nativePhysicalSize,
+              size.width > 0, size.height > 0 else { return nil }
+        return Double(hypot(size.width, size.height)) / 25.4
+    }
+
     /// Freezes the currently resolved screen (id + uuid) and rotation of one digitizer into
     /// persistent storage. Covers both cases: an explicit user edit, and an implicit mapping
     /// that worked fine and should stick (called for all digitizers before the window closes).
@@ -421,6 +436,16 @@ extension TouchUp: TUCTouchDelegate {
 
     func digitizerRotation(forLocationID locationID: UInt32) -> CGFloat {
         digitizerConfigs[locationID]?.additionalRotation ?? 0
+    }
+
+    func physicalSize(forLocationID locationID: UInt32) -> CGSize {
+        // The user's diagonal, split by the screen's current aspect ratio (points are square).
+        guard let inches = digitizerConfigs[locationID]?.screenDiagonalInches, inches > 0,
+              let frame = resolvedMapping(forLocationID: locationID).screen?.frame,
+              frame.width > 0, frame.height > 0 else { return .zero }
+        let diagonalMM = inches * 25.4
+        let scale = diagonalMM / Double(hypot(frame.width, frame.height))
+        return CGSize(width: frame.width * scale, height: frame.height * scale)
     }
     
     func touchscreenDidConnect(withLocationID locationID: UInt32) {

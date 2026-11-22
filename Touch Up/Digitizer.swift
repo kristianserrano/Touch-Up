@@ -20,6 +20,8 @@ struct DigitizerConfig: Codable, Hashable {
     /// Stable per physical panel across launches/rearrangements. Stronger match.
     var screenUUID: String?
     var additionalRotation: CGFloat = 0
+    /// The screen's real diagonal, when the display reports a wrong physical size (EDID). nil: use the reported size.
+    var screenDiagonalInches: Double?
 }
 
 /// How confidently a digitizer's stored screen identity could be resolved against the

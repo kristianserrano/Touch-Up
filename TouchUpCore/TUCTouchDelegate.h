@@ -39,6 +39,15 @@ NS_ASSUME_NONNULL_BEGIN
 
 - (CGFloat)digitizerRotationForLocationID:(uint32_t)locationID;
 
+@optional
+
+/**
+ The touchscreen's visible area in millimetres, in the screen's current orientation, when the user has said how big it
+ is. Return CGSizeZero to use the size the display reports (EDID), which some panels get badly wrong. Gesture distances
+ are measured in millimetres, so a wrong size makes every gesture threshold wrong.
+ */
+- (CGSize)physicalSizeForLocationID:(uint32_t)locationID;
+
 @end
 
 NS_ASSUME_NONNULL_END

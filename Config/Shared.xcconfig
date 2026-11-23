@@ -1,0 +1,10 @@
+// Shared build settings for both targets (the project's base configuration).
+//
+// Your signing team goes in Config/Local.xcconfig, which git ignores, so it never shows up in a diff:
+//
+//     DEVELOPMENT_TEAM = ABCDE12345
+//
+// Find your team ID in Xcode › Settings › Accounts, or in developer.apple.com › Membership. Without the file, choose
+// "Sign to Run Locally" or set a team in Signing & Capabilities (which writes it into the project file instead).
+
+#include? "Local.xcconfig"

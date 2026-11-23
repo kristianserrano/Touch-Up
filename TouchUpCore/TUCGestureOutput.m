@@ -19,6 +19,14 @@ static double TUCNow(void) {
     return (double)clock_gettime_nsec_np(CLOCK_UPTIME_RAW) / 1e9;
 }
 
+/// TOUCHUP_RECORD=1 also prints what the output does with scrolling (see TUCTouchInputManager's recorder).
+static BOOL TUCRecording(void) {
+    static BOOL recording;
+    static dispatch_once_t once;
+    dispatch_once(&once, ^{ recording = getenv("TOUCHUP_RECORD") != NULL; });
+    return recording;
+}
+
 /// The modifier keys physically held right now, so a command-tap or shift-drag is the click it would be with a mouse.
 /// Only the four that change what a click means.
 static CGEventFlags TUCHeldClickModifiers(void) {
@@ -285,6 +293,7 @@ static CGEventFlags TUCHeldClickModifiers(void) {
 #pragma mark - Scrolling
 
 - (void)postScrollWheel1:(int32_t)wheel1 wheel2:(int32_t)wheel2 scrollPhase:(int64_t)scrollPhase momentumPhase:(int64_t)momentumPhase {
+    if (TUCRecording()) printf("O %.4f wheel %d %d phase %lld momentum %lld\n", TUCNow(), wheel1, wheel2, scrollPhase, momentumPhase);
     CGEventRef event = CGEventCreateScrollWheelEvent2(NULL, kCGScrollEventUnitPixel, 2, wheel1, wheel2, 0);
     if (!event) return;
     CGEventSetFlags(event, 0);
@@ -295,8 +304,11 @@ static CGEventFlags TUCHeldClickModifiers(void) {
 }
 
 /// Finger movement (points) -> whole wheel pixels, carrying the fraction. Natural: the content follows the fingers.
-- (void)wheelsFor:(CGVector)d wheel1:(int32_t *)wheel1 wheel2:(int32_t *)wheel2 {
-    double sign = self.settings.naturalScrolling ? 1.0 : -1.0;
+/// The acceleration for how fast it is going (points per second) applies to the fingers and the coasting alike.
+- (void)wheelsFor:(CGVector)d speed:(double)pointsPerSecond wheel1:(int32_t *)wheel1 wheel2:(int32_t *)wheel2 {
+    double ppmm = self.momentum.pointsPerMM > 0 ? self.momentum.pointsPerMM : 4;
+    double gain = TUCScrollBoost(pointsPerSecond / ppmm);
+    double sign = (self.settings.naturalScrolling ? 1.0 : -1.0) * gain;
     _carryX += d.dx * sign;
     _carryY += d.dy * sign;
     *wheel2 = (int32_t)trunc(_carryX);
@@ -310,10 +322,12 @@ static CGEventFlags TUCHeldClickModifiers(void) {
         [self moveCursorTo:p];  // the scroll goes to the view under the fingers
     }
     if (pointsPerMM > 0) self.momentum.pointsPerMM = pointsPerMM;
-    [self.velocity addDx:d.dx dy:d.dy now:TUCNow()];
+    double now = TUCNow();
+    [self.velocity addDx:d.dx dy:d.dy now:now];
+    CGVector v = [self.velocity velocityAt:now];
 
     int32_t wheel1, wheel2;
-    [self wheelsFor:d wheel1:&wheel1 wheel2:&wheel2];
+    [self wheelsFor:d speed:hypot(v.dx, v.dy) wheel1:&wheel1 wheel2:&wheel2];
     if (wheel1 != 0 || wheel2 != 0) {
         // The fingers' scroll is a phased gesture, like a trackpad's: began, then changed, then ended.
         [self postScrollWheel1:wheel1 wheel2:wheel2 scrollPhase:_fingerScrollBegan ? TUCPhaseChanged : TUCPhaseBegan momentumPhase:0];
@@ -321,16 +335,33 @@ static CGEventFlags TUCHeldClickModifiers(void) {
     }
 }
 
+- (void)fingersWentQuiet {
+    if (TUCRecording()) printf("O %.4f quiet scrolling=%d\n", TUCNow(), _fingerScrollBegan);
+    if (_fingerScrollBegan) {
+        [self endScrollAllowingMomentum:YES];
+    }
+}
+
 - (void)endScrollAllowingMomentum:(BOOL)allowMomentum {
+    // Already ended when the fingers went quiet, and coasting: the confirmed lift changes nothing.
+    if (!_fingerScrollBegan && self.momentum.active) {
+        return;
+    }
+
     if (_fingerScrollBegan) {
         [self postScrollWheel1:0 wheel2:0 scrollPhase:TUCPhaseEnded momentumPhase:0];
         _fingerScrollBegan = NO;
     }
 
-    CGVector v = [self.velocity velocityAt:TUCNow()];
+    // As of the last report: a lift noticed late (no report, then a timeout) must not read as fingers that had stopped.
+    double now = TUCNow();
+    double measuredAt = self.lastReportTime > 0 ? fmin(now, self.lastReportTime) : now;
+    CGVector v = [self.velocity velocityAt:measuredAt];
     [self.velocity reset];
 
-    if (allowMomentum && self.settings.scrollMomentum && [self.momentum startWithVelocity:v]) {
+    BOOL coasting = allowMomentum && self.settings.scrollMomentum && [self.momentum startWithVelocity:v];
+    if (TUCRecording()) printf("O %.4f end-scroll v=%.0f,%.0f pt/s measured %.0f ms before now, coast=%d\n", now, v.dx, v.dy, (now - measuredAt) * 1000, coasting);
+    if (coasting) {
         _momentumBegun = NO;
         _lastMomentumTick = TUCNow();
         [self.momentumTimer invalidate];
@@ -355,7 +386,7 @@ static CGEventFlags TUCHeldClickModifiers(void) {
     BOOL last = NO;
     CGVector d = [self.momentum step:dt last:&last];
     int32_t wheel1, wheel2;
-    [self wheelsFor:d wheel1:&wheel1 wheel2:&wheel2];
+    [self wheelsFor:d speed:hypot(d.dx, d.dy) / dt wheel1:&wheel1 wheel2:&wheel2];
     if (wheel1 != 0 || wheel2 != 0) {
         [self postScrollWheel1:wheel1 wheel2:wheel2 scrollPhase:0 momentumPhase:_momentumBegun ? 2 : 1];
         _momentumBegun = YES;
@@ -377,6 +408,7 @@ static CGEventFlags TUCHeldClickModifiers(void) {
 }
 
 - (void)cancelMomentum {
+    if (TUCRecording() && (self.momentum.active || self.momentumTimer != nil)) printf("O %.4f cancel-momentum\n", TUCNow());
     if (!self.momentum.active && self.momentumTimer == nil) return;
     [self.momentum cancel];
     [self finishMomentum];

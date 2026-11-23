@@ -409,6 +409,12 @@ static void TUCWriteLE32(uint8_t *b, size_t at, int32_t v) {
 
 #pragma mark - Scroll velocity & momentum
 
+double TUCScrollBoost(double mmPerSecond) {
+    static const double slow = 70, fast = 270, maxBoost = 5;
+    double t = fmax(0, fmin(1, (mmPerSecond - slow) / (fast - slow)));
+    return 1 + maxBoost * t * t;
+}
+
 @implementation TUCScrollVelocity {
     NSMutableArray<NSArray<NSNumber *> *> *_samples; // [t, dx, dy]
 }

@@ -142,6 +142,7 @@
 
     self.frameIDsByLocationID[@(locationID)] = @(currentFrameID + 1);
 
+    self.output.lastReportTime = (double)clock_gettime_nsec_np(CLOCK_UPTIME_RAW) / 1e9;
     [self processFrameForLocationID:locationID];
     [self scheduleLiftCheckForLocationID:locationID];
 }
@@ -154,11 +155,21 @@
  */
 static const NSTimeInterval TUCLiftTimeout = 0.35;
 
+/// Silence this long (a few report intervals) probably means the fingers lifted: a scroll starts coasting then, without
+/// waiting for the lift timeout.
+static const NSTimeInterval TUCQuietTimeout = 0.07;
+
 - (void)scheduleLiftCheckForLocationID:(uint32_t)locationID {
     NSInteger generation = self.reportGenerationByLocationID[@(locationID)].integerValue + 1;
     self.reportGenerationByLocationID[@(locationID)] = @(generation);
 
     __weak TUCTouchInputManager *weakSelf = self;
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(TUCQuietTimeout * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+        TUCTouchInputManager *strongSelf = weakSelf;
+        if (strongSelf == nil || strongSelf.reportGenerationByLocationID[@(locationID)].integerValue != generation) return;
+        if (strongSelf.postMouseEvents) [strongSelf.output fingersWentQuiet];
+    });
+
     dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(TUCLiftTimeout * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
         TUCTouchInputManager *strongSelf = weakSelf;
         if (strongSelf == nil || strongSelf.reportGenerationByLocationID[@(locationID)].integerValue != generation) return;

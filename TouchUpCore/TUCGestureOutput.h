@@ -30,6 +30,14 @@ NS_ASSUME_NONNULL_BEGIN
 
 - (void)post:(TUCGestureEvent)event;
 
+/// When the touchscreen last sent a report (seconds of uptime). A scroll's lift speed is measured as of then: some screens
+/// stop reporting when the fingers lift, and the lift is only noticed later.
+@property double lastReportTime;
+
+/// The touchscreen has been silent for a moment: the fingers have probably lifted. A scroll ends now and coasts, rather
+/// than when the lift is confirmed; if the fingers move again, scrolling simply carries on.
+- (void)fingersWentQuiet;
+
 /// Called when posting is switched off or the app quits, so a half-finished gesture or a held button isn't left behind.
 - (void)reset;
 

@@ -91,6 +91,7 @@ static CGPoint TUCCentroidPoint(const TUCContact *contacts, NSInteger count) {
     NSInteger settledCount;
     NSInteger candidate;
     double candidateSince;
+    NSInteger candidateFrames;         // reports the candidate count has held
     BOOL candidateHasStart;
     TUCCentre candidateStart;          // where the fingers were when the current count first appeared
     NSInteger tapFingers;              // the largest settled count
@@ -167,11 +168,12 @@ static const NSInteger TUCMaxSwipeFingers = 4;  // more fingers than this do not
 - (instancetype)init {
     if (self = [super init]) {
         _settleSeconds = 0.03;
+        _settleFrames = 2;
         _dragSlopMM = 3.0;
         _longPressSeconds = 0.5;
         _tapMaxDuration = 0.35;
         _tapMaxTravelMM = 4.0;
-        _modeDecisionTravelMM = 3.0;
+        _modeDecisionTravelMM = 2.0;   // T650Native decides at ~1.8 mm; 3 mm made slow scrolls start ~0.1 s late
         _multiSwipeTravelMM = 5.0;
         _edgeMarginMM = 20.0;
         _pinchBias = 1.5;
@@ -324,9 +326,13 @@ static const NSInteger TUCMaxSwipeFingers = 4;  // more fingers than this do not
         s->candidateSince = now;
         s->candidateHasStart = rawCount >= TUCPinchFingers;
         if (s->candidateHasStart) s->candidateStart = TUCCentreOf(contacts, rawCount, now);
+        s->candidateFrames = 0;
     }
+    s->candidateFrames++;
 
-    if (now - s->candidateSince < self.settleSeconds || s->settledCount == rawCount) {
+    // Held long enough, or for enough reports: a screen that reports every 9 ms settles in 2 reports, not 30 ms.
+    BOOL held = now - s->candidateSince >= self.settleSeconds || s->candidateFrames >= self.settleFrames;
+    if (!held || s->settledCount == rawCount) {
         return;
     }
 
@@ -454,10 +460,11 @@ static const NSInteger TUCMaxSwipeFingers = 4;  // more fingers than this do not
                 return;
             }
 
-            // Scroll, catching up the travel spent deciding, so the content stays under the fingers.
+            // Scroll from here on, as iOS does after its touch slop: the travel spent deciding is not caught up in one
+            // jump (a lurch at the start of every scroll); the content just follows the fingers from this point.
             s->twoMode = TUCTwoModeScroll;
-            TUCGestureEvent e = TUCEventAt(TUCGestureKindScroll, s->pairStartPoint);
-            e.delta = CGVectorMake(mid.x - s->pairStartPoint.x, mid.y - s->pairStartPoint.y);
+            TUCGestureEvent e = TUCEventAt(TUCGestureKindScroll, mid);
+            e.delta = CGVectorMake(mid.x - prevMid.x, mid.y - prevMid.y);
             e.value = pointsPerMM;
             [events addObject:TUCWrapEvent(e)];
             return;

@@ -167,6 +167,11 @@ typedef struct {
 
 #pragma mark - Scroll momentum
 
+/// Scroll acceleration, as a trackpad's (T650Native's ScrollScaler.Boost, in mm/s): a stroke slower than ~70 mm/s follows
+/// the fingers exactly; faster ones are boosted, up to 6x at ~270 mm/s. The ramp is squared, so a controlled scroll stays
+/// close to the fingers and only a whip gets most of the boost.
+double TUCScrollBoost(double millimetresPerSecond);
+
 /// How fast the fingers were scrolling when they lifted (points per second). A finger that stopped and then lifted
 /// must not fling the page.
 @interface TUCScrollVelocity : NSObject

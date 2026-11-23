@@ -197,7 +197,8 @@ static void testTwoFingerVerticalScrollFollowsTheFingers(void) {
 
     double total = 0;
     for (NSValue *v in [d ofKind:TUCGestureKindScroll]) total += TUCGestureEventFromValue(v).delta.dy;
-    CHECK(fabs(total - 30 * kPPMM) < 0.001, @"scroll should total the finger travel in points (120), got %f", total);
+    // All the finger travel but the few mm spent deciding it is a scroll (not caught up in one jump).
+    CHECK(total > (30 - 4) * kPPMM && total <= 30 * kPPMM + 0.001, @"scroll should follow the fingers after the decision, got %f", total);
     CHECK([d first:TUCGestureKindScroll].value == kPPMM, @"scroll carries points per mm");
     CHECK([d ofKind:TUCGestureKindScrollEnd].count == 1, @"one ScrollEnd");
 }
@@ -510,6 +511,13 @@ static void testMomentumCoastsAndStops(void) {
     CHECK(total > 100 && total < 2000, @"coasts a plausible distance, got %f pt in %d steps", total, steps);
 }
 
+static void testScrollBoost(void) {
+    currentTest = @"scroll boost";
+    CHECK(TUCScrollBoost(0) == 1 && TUCScrollBoost(70) == 1, @"slow strokes follow the fingers");
+    CHECK(TUCScrollBoost(170) > 1 && TUCScrollBoost(170) < 6, @"ramps between");
+    CHECK(TUCScrollBoost(270) == 6 && TUCScrollBoost(1000) == 6, @"6x at full speed");
+}
+
 static void testClickCounter(void) {
     currentTest = @"click counter";
     TUCClickCounter *c = [TUCClickCounter new];
@@ -735,6 +743,7 @@ int main(void) {
         testDockBlockInsertion();
         testMomentumCoastsAndStops();
         testClickCounter();
+        testScrollBoost();
         testRecordedMultiFingerStrokes();
         testRecordedTwoFingerTaps();
         testQuickTwoFingerTapIsStillTwoFingers();

@@ -61,7 +61,8 @@ typedef struct {
 
 #pragma mark Tunables
 
-@property double settleSeconds;          // how long a finger count must hold to count
+@property double settleSeconds;          // how long a finger count must hold to count...
+@property NSInteger settleFrames;        // ...or for this many reports, whichever comes first (fast screens settle sooner)
 @property double dragSlopMM;             // one finger travelling this far presses the button and drags
 @property double longPressSeconds;       // one finger held still this long presses the button (press and hold)
 @property double tapMaxDuration;         // seconds, for two- and three-finger taps

@@ -114,8 +114,10 @@ class SettingsWindow: NSWindow {
     
     static func window(model: TouchUp) -> SettingsWindow {
         let vc = NSHostingController(rootView: SettingsView(model:model))
-        let window = SettingsWindow(contentRect: .zero,
-                                    styleMask: [.closable, .titled, .fullSizeContentView, .resizable],
+        // The SwiftUI toolbar (Reset to Defaults) and title become the window's.
+        vc.sceneBridgingOptions = [.toolbars, .title]
+        let window = SettingsWindow(contentRect: NSRect(x: 0, y: 0, width: 960, height: 560),
+                                    styleMask: [.closable, .titled, .fullSizeContentView, .resizable, .miniaturizable],
                                     backing: .buffered,
                                     defer: true,
                                     screen: nil)

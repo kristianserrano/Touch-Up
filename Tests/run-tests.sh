@@ -11,3 +11,7 @@ clang -fobjc-arc -Wall -Wextra -Wno-unused-parameter -I "$core" \
     -framework Foundation -framework CoreGraphics -o "$out/gesture-tests"
 
 "$out/gesture-tests"
+
+# The settings rules (Swift, no app or framework needed).
+swiftc -O -o "$out/settings-tests" "$here/../Touch Up/GestureSettings.swift" "$here/Swift/main.swift" -module-name SettingsTests
+"$out/settings-tests"

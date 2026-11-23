@@ -2,345 +2,376 @@
 //  SettingsView.swift
 //  Touch Up
 //
-//  Created by Sebastian Hueber on 03.02.23.
+//  The settings window: a port of the T650Native project's native settings window
+//  (native/SettingsApp/Sources/T650Settings/SettingsViews.swift). A sidebar of panes; in each, the settings as cards with a
+//  summary of how they are set, and the selected one in full beside them with its animation. Touch Up's own touchscreen
+//  settings have a pane of their own.
 //
 
 import SwiftUI
 import TouchUpCore
 
 struct SettingsView: View {
-    
     @ObservedObject var model: TouchUp
-    
-    var welcomeBanner: some View {
-        Group {
-            VStack(alignment: .leading, spacing: 6) {
-                Text("Welcome to Touch Up 🐑")
-                    .font(.largeTitle)
-                Text("Touch Up converts USB HID data from any Windows certified touchscreen to mouse events.\nInjecting mouse events requires access to accessibility APIs. You can allow this by clicking the button below.")
-            }
-            
-            HStack {
-                Spacer()
-                Button {
-                    model.grantAccessibilityAccess()
-                } label: {
-                    
-                    Text("Grant Accessibility Access")
+    @State private var selection: SettingsPane?
+    @State private var confirmingReset = false
+
+    var body: some View {
+        NavigationSplitView {
+            List(SettingsCatalog.panes, selection: shownPane) { pane in
+                NavigationLink(value: pane) {
+                    Label(pane.title, systemImage: pane.symbol)
                 }
-                .buttonStyle(BorderedProminentButtonStyle())
             }
-        }
-    }
-    
-    var top: some View {
-        Toggle(model.uiLabels(for: \.isPublishingMouseEventsEnabled).title, isOn: $model.isPublishingMouseEventsEnabled)
-    }
-
-    
-    var pointAndClickSettings: some View {
-        Group {
-            Toggle(isOn: $model.secondaryClick) {
-                SettingsExplanationLabel(labels: ("Secondary Click", "Tap with two fingers."))
-            }
-
-            Toggle(isOn: $model.lookUp) {
-                SettingsExplanationLabel(labels: ("Look Up & Data Detectors", "Tap with three fingers."))
-            }
-        }
-    }
-
-
-    var scrollAndZoomSettings: some View {
-        Group {
-            Toggle(isOn: $model.naturalScrolling) {
-                SettingsExplanationLabel(labels: ("Natural Scrolling", "Content tracks your finger movement."))
-            }
-
-            Toggle(isOn: $model.scrollMomentum) {
-                SettingsExplanationLabel(labels: ("Scroll Momentum", "Keep scrolling for a moment after your fingers lift."))
-            }
-
-            Toggle(isOn: $model.zoom) {
-                SettingsExplanationLabel(labels: ("Zoom In or Out", "Pinch with two fingers."))
-            }
-
-            Toggle(isOn: $model.smartZoom) {
-                SettingsExplanationLabel(labels: ("Smart Zoom", "Double-tap with two fingers. A single two-finger tap then waits a moment before its secondary click."))
-            }
-
-            Toggle(isOn: $model.rotate) {
-                SettingsExplanationLabel(labels: ("Rotate", "Rotate with two fingers."))
-            }
-        }
-    }
-
-
-    var moreGesturesSettings: some View {
-        Group {
-            Toggle(isOn: $model.swipeBetweenPages) {
-                SettingsExplanationLabel(labels: ("Swipe Between Pages", "Go back and forward in browsers and other apps."))
-            }
-            Picker("", selection: $model.pagesTrigger) {
-                Text("Scroll left or right with two fingers").tag(TUCPagesTrigger.twoFingerScroll)
-                Text("Swipe with three fingers").tag(TUCPagesTrigger.threeFingerSwipe)
-                Text("Swipe with two or three fingers").tag(TUCPagesTrigger.twoOrThreeFingerSwipe)
-            }
-            .disabled(!model.swipeBetweenPages)
-
-            Toggle(isOn: $model.swipeBetweenFullScreenApps) {
-                SettingsExplanationLabel(labels: ("Swipe Between Full-Screen Apps", "Swipe left or right."))
-            }
-            Picker("", selection: $model.fullScreenAppsFingers) {
-                Text("Three fingers").tag(3)
-                Text("Four fingers").tag(4)
-            }
-            .disabled(!model.swipeBetweenFullScreenApps)
-
-            Toggle(isOn: $model.notificationCenter) {
-                SettingsExplanationLabel(labels: ("Notification Center", "Swipe left from the right edge with two fingers."))
-            }
-
-            Toggle(isOn: $model.missionControl) {
-                SettingsExplanationLabel(labels: ("Mission Control", "Swipe up."))
-            }
-
-            Toggle(isOn: $model.appExpose) {
-                SettingsExplanationLabel(labels: ("App Exposé", "Swipe down."))
-            }
-            Picker("", selection: $model.missionControlFingers) {
-                Text("Three fingers").tag(3)
-                Text("Four fingers").tag(4)
-            }
-            .disabled(!model.missionControl && !model.appExpose)
-
-            Toggle(isOn: $model.launchpad) {
-                SettingsExplanationLabel(labels: ("Launchpad", "Pinch with thumb and three fingers."))
-            }
-
-            Toggle(isOn: $model.showDesktop) {
-                SettingsExplanationLabel(labels: ("Show Desktop", "Spread with thumb and three fingers."))
-            }
-        }
-    }
-    
-    
-    var parameterSettings: some View {
-        Group {
-            Slider(value: $model.longPressDuration, in: 0.2...1.5, step: 0.1){
-                SettingsExplanationLabel(labels: model.uiLabels(for: \.longPressDuration))
-            }
-
-            Slider(value: $model.dragThreshold, in: 1...8, step: 0.5){
-                SettingsExplanationLabel(labels: model.uiLabels(for: \.dragThreshold))
-            }
-            
-            Slider(value: $model.doubleClickDistance, in: 0...8, step: 1) {
-                SettingsExplanationLabel(labels: model.uiLabels(for: \.doubleClickDistance))
-            }
-        }
-    }
-    
-    
-    var troubleshootingSettings: some View {
-        Group {
-            let errorResistance_ = Binding {Double(model.errorResistance)} set: {
-                model.errorResistance = NSInteger(Int($0)) }
-            
-            Slider(value: errorResistance_ , in: 0...10, step: 1) {
-                SettingsExplanationLabel(labels: model.uiLabels(for: \.errorResistance))
-            }
-            
-            Slider(value: $model.edgeDeadZone, in: 0...30, step: 5) {
-                SettingsExplanationLabel(labels: model.uiLabels(for: \.edgeDeadZone))
-            }
-
-            Toggle(isOn: $model.ignoreOriginTouches) {
-                SettingsExplanationLabel(labels: model.uiLabels(for: \.ignoreOriginTouches))
-            }
-
-            Toggle(isOn: $model.isExclusiveAccessEnabled) {
-                SettingsExplanationLabel(labels: model.uiLabels(for: \.isExclusiveAccessEnabled))
-            }
-
-            Toggle(isOn: $model.areAdditionalDigitizerRotationSettingsVisible) {
-                SettingsExplanationLabel(labels: model.uiLabels(for: \.areAdditionalDigitizerRotationSettingsVisible))
-            }
-        }
-    }
-    
-    
-    var footer: some View {
-        HStack {
-            Spacer()
-            VStack {
-                if let versionString = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String {
-                    Text("Touch Up v\(versionString)")
-                        .font(.title2)
-                }
-
-                Text("Made with 🐑 in Aachen")
-                    .font(.footnote)
-                
-                Link(destination: URL(string: "https://github.com/shueber/Touch-Up")!, label: {
-                    Label("GitHub", systemImage: "link")
-                        .foregroundColor(.accentColor)
-                })
-            }
-            .padding(.vertical)
-            Spacer()
-        }
-        .font(.footnote)
-        .foregroundColor(.secondary)
-        
-    }
-    
-    var container: some View {
-        if #available(macOS 13.0, *) {
-            return Form {
-                if !model.isAccessibilityAccessGranted {
-                    Section {
-                        welcomeBanner
-                    } footer: {
-                        Rectangle()
-                            .frame(width:0, height:0)
-                            .foregroundColor(.clear)
+            .safeAreaInset(edge: .bottom) { AboutFooter() }
+            .navigationSplitViewColumnWidth(min: 190, ideal: 210)
+        } detail: {
+            detail
+                .toolbar {
+                    ToolbarItem {
+                        Button("Reset to Defaults…") { confirmingReset = true }
                     }
-
                 }
-                
-                Section {
-                    top
+                .confirmationDialog("Reset All Settings to Their Defaults?", isPresented: $confirmingReset) {
+                    Button("Reset to Defaults", role: .destructive) { model.resetSettingsToDefaults() }
+                } message: {
+                    Text("Every gesture, click and drag setting goes back to how it was when Touch Up was first installed. Touchscreen settings are kept.")
                 }
+        }
+        .overlay(alignment: .bottom) {
+            if let note = model.settingsNote {
+                Text(note)
+                    .font(.callout)
+                    .padding(.horizontal, 14)
+                    .padding(.vertical, 8)
+                    .background(.regularMaterial, in: Capsule())
+                    .shadow(radius: 4, y: 1)
+                    .padding(.bottom, 16)
+                    .padding(.horizontal, 24)
+                    .transition(.move(edge: .bottom).combined(with: .opacity))
+            }
+        }
+        .animation(.default, value: model.settingsNote)
+        // A change that moves other settings: say which, from what and to what, and make it only if confirmed.
+        .sheet(item: Binding(get: { model.confirmation }, set: { if $0 == nil { model.cancelSettingsChange() } })) { confirmation in
+            ConfirmationSheet(model: model, confirmation: confirmation)
+        }
+        .frame(minWidth: 900, minHeight: 480)
+    }
 
-                Section("Touchscreens") {
-                    DigitizerMappingView(model: self.model)
+    /// The first pane until another is chosen; Touchscreens first while Touch Up cannot post events yet.
+    private var shownPane: Binding<SettingsPane?> {
+        Binding(get: {
+            selection ?? (model.isAccessibilityAccessGranted
+                ? SettingsCatalog.panes.first
+                : SettingsCatalog.panes.first { $0.id == SettingsCatalog.touchscreensPaneID })
+        }, set: { selection = $0 })
+    }
+
+    @ViewBuilder
+    private var detail: some View {
+        if let pane = shownPane.wrappedValue {
+            Group {
+                if pane.groups.isEmpty {
+                    TouchscreensPane(model: model)
+                } else {
+                    PaneView(model: model, pane: pane)
                 }
+            }
+            .id(pane.id)
+            .navigationTitle(pane.title)
+        }
+    }
+}
 
-                Section("Point & Click") {
-                    pointAndClickSettings
+// The sizes the views share.
+private enum Layout {
+    static let cardColumnWidth: CGFloat = 280
+    static let cardSpacing: CGFloat = 8
+    static let cardPadding: CGFloat = 10
+    static let cardCornerRadius: CGFloat = 8
+    static let cardSelectedFillOpacity = 0.18
+    static let iconWidth: CGFloat = 20
+    static let iconSpacing: CGFloat = 10
+    static let glyphMaxWidth: CGFloat = 280
+    static let glyphMaxHeight: CGFloat = 220
+    static let sheetWidth: CGFloat = 440
+}
+
+/// A pane: the settings as cards on the left, each with a summary of how it is set, and on the right the selected one in
+/// full (its name and explanation, its switch or choice, its other controls and note) with its animation beneath.
+struct PaneView: View {
+    @ObservedObject var model: TouchUp
+    let pane: SettingsPane
+    @State private var selected: String?
+
+    private var current: SettingGroup {
+        pane.groups.first { $0.id == selected } ?? pane.groups[0]
+    }
+
+    var body: some View {
+        let settings: (String) -> SettingValue? = { model.value($0) }
+        HStack(spacing: 0) {
+            ScrollView {
+                VStack(spacing: Layout.cardSpacing) {
+                    ForEach(pane.groups) { group in
+                        SettingCard(group: group, summary: SettingsCatalog.summary(group, in: settings), isSelected: group.id == current.id) {
+                            selected = group.id
+                        }
+                    }
                 }
+                .padding(12)
+            }
+            .frame(width: Layout.cardColumnWidth)
 
-                Section("Scroll & Zoom") {
-                    scrollAndZoomSettings
+            Divider()
+
+            Form {
+                GroupSection(model: model, group: current)
+                if let glyph = SettingsCatalog.glyph(for: current, in: settings) {
+                    Section {
+                        GestureGlyphView(glyph: glyph, offLabel: SettingsCatalog.offLabel)
+                            .frame(maxWidth: Layout.glyphMaxWidth, maxHeight: Layout.glyphMaxHeight)
+                            .frame(maxWidth: .infinity)
+                            .padding(.vertical, 8)
+                    }
                 }
-
-                Section("More Gestures") {
-                    moreGesturesSettings
-                }
-                
-                Section("Parameters") {
-                    parameterSettings
-                }
-
-                Section {
-                    troubleshootingSettings
-                } header: {
-                    Text("Troubleshooting")
-                } footer: {
-                    footer
-                }
-
-
-
             }
             .formStyle(.grouped)
-
-        } else {
-            return List {
-                LegacySection {
-                    top
-                }
-
-                LegacySection(title: "Touchscreens") {
-                    DigitizerMappingView(model: self.model)
-                }
-
-                LegacySection(title: "Point & Click") {
-                    pointAndClickSettings
-                }
-
-                LegacySection(title: "Scroll & Zoom") {
-                    scrollAndZoomSettings
-                }
-
-                LegacySection(title: "More Gestures") {
-                    moreGesturesSettings
-                }
-                
-                LegacySection(title: "Parameters") {
-                    parameterSettings
-                }
-                
-                LegacySection(title: "Troubleshooting") {
-                    troubleshootingSettings
-                }
-                
-                footer
-                
-            }
-            .toggleStyle(.switch)
-            
         }
     }
-    
-    
-    
+}
+
+/// A setting's icon, as every row draws it.
+struct SettingIcon: View {
+    let symbol: String
+
     var body: some View {
-        container
-        .frame(minWidth: 400, maxWidth: .infinity, minHeight: 350,  maxHeight: .infinity)
-        
+        Image(systemName: symbol)
+            .foregroundStyle(.tint)
+            .frame(width: Layout.iconWidth)
+    }
+}
+
+/// An icon, a title in bold and a line under it: a card, and a row of the confirmation.
+struct IconTitleRow: View {
+    let symbol: String
+    let title: String
+    let subtitle: String
+    var subtitleFont: Font = .body
+    var subtitleLines: Int? = nil
+
+    var body: some View {
+        HStack(alignment: .firstTextBaseline, spacing: Layout.iconSpacing) {
+            SettingIcon(symbol: symbol)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(title)
+                    .fontWeight(.semibold)
+                Text(subtitle)
+                    .font(subtitleFont)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(subtitleLines)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            Spacer(minLength: 0)
+        }
+    }
+}
+
+/// A group's heading in the form: its icon, a title, and its explanation under it (as System Settings labels a setting).
+struct GroupHeading: View {
+    let title: String
+    let group: SettingGroup
+
+    var body: some View {
+        Label {
+            Text(title)
+            Text(group.text)
+        } icon: {
+            Image(systemName: group.symbol)
+                .foregroundStyle(.tint)
+        }
+    }
+}
+
+/// A setting as a card: its icon, its name and how it is set now. Selecting it shows it in full beside the cards.
+struct SettingCard: View {
+    let group: SettingGroup
+    let summary: String
+    let isSelected: Bool
+    let select: () -> Void
+
+    var body: some View {
+        let shape = RoundedRectangle(cornerRadius: Layout.cardCornerRadius)
+        Button(action: select) {
+            IconTitleRow(symbol: group.symbol, title: group.title, subtitle: summary, subtitleFont: .callout, subtitleLines: 2)
+                .padding(Layout.cardPadding)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(shape.fill(isSelected ? Color.accentColor.opacity(Layout.cardSelectedFillOpacity) : Color(nsColor: .controlBackgroundColor)))
+                .overlay(shape.strokeBorder(isSelected ? Color.accentColor : Color(nsColor: .separatorColor), lineWidth: isSelected ? 1.5 : 0.5))
+                .contentShape(shape)
+        }
+        .buttonStyle(.plain)
+        .accessibilityAddTraits(isSelected ? .isSelected : [])
+    }
+}
+
+/// One group, as System Settings draws a setting: a switch (or a title) with its explanation under it, then its method,
+/// then a note.
+struct GroupSection: View {
+    @ObservedObject var model: TouchUp
+    let group: SettingGroup
+
+    var body: some View {
+        Section {
+            if let toggle = group.toggle, let method = group.method {
+                Picker(selection: choice(toggle: toggle, method: method.name)) {
+                    Text(group.offLabel).tag(String?.none)
+                    Divider()
+                    ForEach(method.options) { option in
+                        Text(option.label).tag(Optional(option.value))
+                    }
+                } label: {
+                    GroupHeading(title: group.switchLabel, group: group)
+                }
+            } else {
+                if let toggle = group.toggle {
+                    Toggle(isOn: boolBinding(toggle)) { GroupHeading(title: group.switchLabel, group: group) }
+                } else {
+                    GroupHeading(title: group.title, group: group)
+                }
+
+                // The controls under a switch work only while it is on.
+                let usable = group.toggle.map { model.value($0)?.bool ?? false } ?? true
+                ForEach(group.controls) { control in
+                    ControlRow(model: model, control: control)
+                        .disabled(!usable)
+                }
+            }
+        } footer: {
+            if let note = group.note {
+                Text(note)
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+                    .multilineTextAlignment(.leading)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
+        }
+    }
+
+    private func boolBinding(_ name: String) -> Binding<Bool> {
+        Binding(get: { model.value(name)?.bool ?? false }, set: { model.set(name, to: .bool($0)) })
+    }
+
+    /// Off while the gesture is off, else its method.
+    private func choice(toggle: String, method: String) -> Binding<String?> {
+        Binding(
+            get: { model.value(toggle)?.bool == true ? model.value(method)?.string : nil },
+            set: { model.choose(toggle: toggle, method: method, value: $0) })
+    }
+}
+
+struct ControlRow: View {
+    @ObservedObject var model: TouchUp
+    let control: Control
+
+    var body: some View {
+        switch control {
+        case .measure(let name, let label, let range, let step, let format):
+            let value = model.value(name)?.double ?? range.lowerBound
+            Slider(value: Binding(get: { value }, set: { model.set(name, to: .double($0)) }), in: range, step: step) {
+                Text(label)
+                Text(String(format: format, value))
+            }
+
+        case .toggle(let name, let label, let text):
+            Toggle(isOn: Binding(get: { model.value(name)?.bool ?? false }, set: { model.set(name, to: .bool($0)) })) {
+                Text(label)
+                if let text { Text(text) }
+            }
+
+        case .picker(let name, let label, let options):
+            Picker(label, selection: Binding(get: { model.value(name)?.string ?? options[0].value }, set: { model.set(name, to: .string($0)) })) {
+                ForEach(options) { option in
+                    Text(option.label).tag(option.value)
+                }
+            }
+        }
+    }
+}
+
+/// The confirmation for a change that moves other settings: the change, then each setting it moves, each as its icon, its
+/// name and "from → to".
+struct ConfirmationSheet: View {
+    @ObservedObject var model: TouchUp
+    let confirmation: SettingsConfirmation
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            Text("Confirm Setting Changes")
+                .font(.headline)
+
+            section("You're changing:", [confirmation.change])
+            section(confirmation.others.count == 1 ? "This also changes:" : "This also changes these settings:", confirmation.others)
+
+            Text("Continue with changes?")
+
+            HStack {
+                Spacer()
+                Button("Cancel", role: .cancel) { model.cancelSettingsChange() }
+                    .keyboardShortcut(.cancelAction)
+                Button("Change") { model.confirmSettingsChange() }
+                    .keyboardShortcut(.defaultAction)
+            }
+        }
+        .padding(20)
+        .frame(width: Layout.sheetWidth)
+    }
+
+    private func section(_ heading: String, _ rows: [SettingsConfirmation.Row]) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text(heading)
+                .foregroundStyle(.secondary)
+            ForEach(rows) { row in
+                IconTitleRow(symbol: row.symbol, title: row.title, subtitle: "\(row.from) → \(row.to)")
+                    .accessibilityElement(children: .combine)
+            }
+        }
     }
 }
 
 
-struct LegacySection<Content: View>: View {
-    var title: String? = nil
-    var content: () -> Content
-    
+/// The app's version, credit and link, at the bottom of the sidebar.
+struct AboutFooter: View {
     var body: some View {
-        VStack(alignment: .leading) {
-            if let title = title {
-                Text(title)
-                    .font(.headline)
-                    .padding(.horizontal, 12)
+        VStack(spacing: 3) {
+            if let version = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String {
+                Text("Touch Up v\(version)")
+                    .fontWeight(.semibold)
             }
-            
-            ZStack {
-                RoundedRectangle(cornerRadius: 8)
-                    .foregroundColor(.secondary.opacity(0.1))
-                    .shadow(radius: 1)
-                    
-                    
-                
-                VStack(alignment: .leading, spacing: 16, content: content)
-                    .padding(12)
+            Text("Made with 🐑 in Aachen")
+            Link(destination: URL(string: "https://github.com/shueber/Touch-Up")!) {
+                Label("GitHub", systemImage: "link")
             }
-            
         }
-        .padding(.bottom)
+        .font(.caption)
+        .foregroundStyle(.secondary)
+        .frame(maxWidth: .infinity)
+        .padding(.vertical, 12)
     }
 }
 
 
 struct SettingsExplanationLabel: View {
-    
-    let labels: (title:String, description:String)
-    
+    let labels: (title: String, description: String)
+
     var body: some View {
-        VStack(alignment:.leading, spacing: 4) {
-            Text(labels.title)
-            Text(labels.description)
-                .foregroundColor(.secondary)
-                .font(.caption)
-        }
+        Text(labels.title)
+        Text(labels.description)
     }
 }
 
 
-
-struct SettingsView_Previews: PreviewProvider {
-    static var previews: some View {
-        SettingsView(model: TouchUp())
-    }
+#Preview {
+    SettingsView(model: TouchUp())
 }

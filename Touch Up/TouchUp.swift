@@ -29,35 +29,21 @@ class TouchUp: NSObject, ObservableObject {
     @Published var ignoreOriginTouches: Bool = false
     @Published var isExclusiveAccessEnabled: Bool = false
 
-    // Trackpad gestures (System Settings > Trackpad). Every change is pushed to the touch manager.
-    @Published var naturalScrolling = true { didSet { applyGestureSettings() } }
-    @Published var scrollMomentum = true { didSet { applyGestureSettings() } }
-    @Published var secondaryClick = true { didSet { applyGestureSettings() } }
-    @Published var lookUp = false { didSet { applyGestureSettings() } }
-    @Published var zoom = true { didSet { applyGestureSettings() } }
-    @Published var smartZoom = true { didSet { applyGestureSettings() } }
-    @Published var rotate = true { didSet { applyGestureSettings() } }
-    @Published var swipeBetweenPages = true { didSet { applyGestureSettings() } }
-    @Published var pagesTrigger: TUCPagesTrigger = .twoFingerScroll {
+    /// The trackpad gestures (named and ruled as in T650Native). Every change goes to the touch manager and is saved at once.
+    @Published private(set) var gestures = GestureSettings() {
         didSet {
-            // Pages and full-screen apps cannot both be three-finger swipes: the one just changed wins, as in macOS.
-            if !isApplyingStoredGestures && pagesTrigger != .twoFingerScroll && fullScreenAppsFingers == 3 { fullScreenAppsFingers = 4 }
-            applyGestureSettings()
+            touchManager.gestureSettings = gestures.core
+            if let data = try? JSONEncoder().encode(gestures) {
+                UserDefaults.standard.set(data, forKey: Self.gestureSettingsKey)
+            }
         }
     }
-    @Published var swipeBetweenFullScreenApps = true { didSet { applyGestureSettings() } }
-    @Published var fullScreenAppsFingers = 3 {
-        didSet {
-            if !isApplyingStoredGestures && fullScreenAppsFingers == 3 && pagesTrigger != .twoFingerScroll { pagesTrigger = .twoFingerScroll }
-            applyGestureSettings()
-        }
-    }
-    @Published var missionControl = true { didSet { applyGestureSettings() } }
-    @Published var appExpose = true { didSet { applyGestureSettings() } }
-    @Published var missionControlFingers = 3 { didSet { applyGestureSettings() } }
-    @Published var launchpad = true { didSet { applyGestureSettings() } }
-    @Published var showDesktop = true { didSet { applyGestureSettings() } }
-    @Published var notificationCenter = true { didSet { applyGestureSettings() } }
+    static let gestureSettingsKey = "gestureSettings"
+
+    /// A change that moves other settings too, waiting for the user to confirm it (see `SettingsConfirmation`).
+    @Published var confirmation: SettingsConfirmation?
+    /// A short note at the bottom of the settings window (a reset done), cleared after a few seconds.
+    @Published var settingsNote: String?
 
     @Published var areAdditionalDigitizerRotationSettingsVisible = false
 
@@ -80,9 +66,6 @@ class TouchUp: NSObject, ObservableObject {
 
     @Published var isAccessibilityAccessGranted = false
 
-    /// Set while the stored gesture settings are loaded: they are pushed to the touch manager once, at the end, and
-    /// the pages / full-screen apps conflict rule is not applied to them.
-    private var isApplyingStoredGestures = false
 
 
     @objc func screenParametersDidChange() {
@@ -157,24 +140,6 @@ extension TouchUp {
             "ignoreOriginTouches" : true,
             "isExclusiveAccessEnabled" : false,
             "areAdditionalDigitizerRotationSettingsVisible" : false,
-
-            "gesture.naturalScrolling" : true,
-            "gesture.scrollMomentum" : true,
-            "gesture.secondaryClick" : true,
-            "gesture.lookUp" : false,
-            "gesture.zoom" : true,
-            "gesture.smartZoom" : true,
-            "gesture.rotate" : true,
-            "gesture.swipeBetweenPages" : true,
-            "gesture.pagesTrigger" : TUCPagesTrigger.twoFingerScroll.rawValue,
-            "gesture.swipeBetweenFullScreenApps" : true,
-            "gesture.fullScreenAppsFingers" : 3,
-            "gesture.missionControl" : true,
-            "gesture.appExpose" : true,
-            "gesture.missionControlFingers" : 3,
-            "gesture.launchpad" : true,
-            "gesture.showDesktop" : true,
-            "gesture.notificationCenter" : true,
         ])
         
         longPressDuration = defaults.double(forKey: "longPressDuration")
@@ -202,27 +167,7 @@ extension TouchUp {
         
         
         
-        isApplyingStoredGestures = true
-        naturalScrolling = defaults.bool(forKey: "gesture.naturalScrolling")
-        scrollMomentum = defaults.bool(forKey: "gesture.scrollMomentum")
-        secondaryClick = defaults.bool(forKey: "gesture.secondaryClick")
-        lookUp = defaults.bool(forKey: "gesture.lookUp")
-        zoom = defaults.bool(forKey: "gesture.zoom")
-        smartZoom = defaults.bool(forKey: "gesture.smartZoom")
-        rotate = defaults.bool(forKey: "gesture.rotate")
-        swipeBetweenPages = defaults.bool(forKey: "gesture.swipeBetweenPages")
-        swipeBetweenFullScreenApps = defaults.bool(forKey: "gesture.swipeBetweenFullScreenApps")
-        // The conflict rules are off while loading: the stored pair was already resolved when it was saved.
-        pagesTrigger = TUCPagesTrigger(rawValue: defaults.integer(forKey: "gesture.pagesTrigger")) ?? .twoFingerScroll
-        fullScreenAppsFingers = defaults.integer(forKey: "gesture.fullScreenAppsFingers") == 4 ? 4 : 3
-        missionControl = defaults.bool(forKey: "gesture.missionControl")
-        appExpose = defaults.bool(forKey: "gesture.appExpose")
-        missionControlFingers = defaults.integer(forKey: "gesture.missionControlFingers") == 4 ? 4 : 3
-        launchpad = defaults.bool(forKey: "gesture.launchpad")
-        showDesktop = defaults.bool(forKey: "gesture.showDesktop")
-        notificationCenter = defaults.bool(forKey: "gesture.notificationCenter")
-        isApplyingStoredGestures = false
-        applyGestureSettings()
+        gestures = Self.loadGestureSettings(from: defaults)
 
         areAdditionalDigitizerRotationSettingsVisible = defaults.bool(forKey: "areAdditionalDigitizerRotationSettingsVisible")
     }
@@ -239,23 +184,6 @@ extension TouchUp {
         defaults.set(ignoreOriginTouches, forKey: "ignoreOriginTouches")
         defaults.set(isExclusiveAccessEnabled, forKey: "isExclusiveAccessEnabled")
 
-        defaults.set(naturalScrolling, forKey: "gesture.naturalScrolling")
-        defaults.set(scrollMomentum, forKey: "gesture.scrollMomentum")
-        defaults.set(secondaryClick, forKey: "gesture.secondaryClick")
-        defaults.set(lookUp, forKey: "gesture.lookUp")
-        defaults.set(zoom, forKey: "gesture.zoom")
-        defaults.set(smartZoom, forKey: "gesture.smartZoom")
-        defaults.set(rotate, forKey: "gesture.rotate")
-        defaults.set(swipeBetweenPages, forKey: "gesture.swipeBetweenPages")
-        defaults.set(pagesTrigger.rawValue, forKey: "gesture.pagesTrigger")
-        defaults.set(swipeBetweenFullScreenApps, forKey: "gesture.swipeBetweenFullScreenApps")
-        defaults.set(fullScreenAppsFingers, forKey: "gesture.fullScreenAppsFingers")
-        defaults.set(missionControl, forKey: "gesture.missionControl")
-        defaults.set(appExpose, forKey: "gesture.appExpose")
-        defaults.set(missionControlFingers, forKey: "gesture.missionControlFingers")
-        defaults.set(launchpad, forKey: "gesture.launchpad")
-        defaults.set(showDesktop, forKey: "gesture.showDesktop")
-        defaults.set(notificationCenter, forKey: "gesture.notificationCenter")
         defaults.set(areAdditionalDigitizerRotationSettingsVisible, forKey: "areAdditionalDigitizerRotationSettingsVisible")
     }
 
@@ -263,31 +191,67 @@ extension TouchUp {
 
 
 // MARK: - Trackpad Gestures
+extension GestureSettings {
+    /// The settings as the framework takes them.
+    var core: TUCGestureSettings {
+        let s = TUCGestureSettings()
+        s.naturalScrolling = ScrollDirection == .Natural
+        s.scrollMomentum = ScrollMomentum
+        s.secondaryClick = SecondaryClick
+        s.lookUp = LookUp
+        s.zoom = Zoom
+        s.smartZoom = SmartZoom
+        s.rotate = Rotate
+        s.swipeBetweenPages = SwipeBetweenPages
+        switch PagesTrigger {
+        case .TwoFingerScroll: s.pagesTrigger = .twoFingerScroll
+        case .TwoOrThreeFingerSwipe: s.pagesTrigger = .twoOrThreeFingerSwipe
+        case .ThreeFingerSwipe: s.pagesTrigger = .threeFingerSwipe
+        }
+        s.swipeBetweenFullScreenApps = SwipeBetweenDesktops
+        s.fullScreenAppsFingers = DesktopsFingers.count
+        s.missionControl = MissionControl
+        s.appExpose = AppExpose
+        s.missionControlFingers = MissionControlFingers.count
+        s.launchpad = Launchpad
+        s.showDesktop = ShowDesktop
+        s.notificationCenter = NotificationCenter
+        return s
+    }
+}
+
 extension TouchUp {
 
-    /// Hands the current gesture switches to the touch manager (it keeps a copy).
-    func applyGestureSettings() {
-        if isApplyingStoredGestures { return }
+    /// The saved gestures; before there were any, the separate keys an earlier build of this fork saved, else the defaults.
+    static func loadGestureSettings(from defaults: UserDefaults) -> GestureSettings {
+        if let data = defaults.data(forKey: gestureSettingsKey),
+           let saved = try? JSONDecoder().decode(GestureSettings.self, from: data) {
+            return saved
+        }
 
-        let s = TUCGestureSettings()
-        s.naturalScrolling = naturalScrolling
-        s.scrollMomentum = scrollMomentum
-        s.secondaryClick = secondaryClick
-        s.lookUp = lookUp
-        s.zoom = zoom
-        s.smartZoom = smartZoom
-        s.rotate = rotate
-        s.swipeBetweenPages = swipeBetweenPages
-        s.pagesTrigger = pagesTrigger
-        s.swipeBetweenFullScreenApps = swipeBetweenFullScreenApps
-        s.fullScreenAppsFingers = fullScreenAppsFingers
-        s.missionControl = missionControl
-        s.appExpose = appExpose
-        s.missionControlFingers = missionControlFingers
-        s.launchpad = launchpad
-        s.showDesktop = showDesktop
-        s.notificationCenter = notificationCenter
-        touchManager.gestureSettings = s
+        var s = GestureSettings()
+        guard defaults.object(forKey: "gesture.zoom") != nil else { return s }
+        func bool(_ key: String, _ fallback: Bool) -> Bool { defaults.object(forKey: key) == nil ? fallback : defaults.bool(forKey: key) }
+        func fingers(_ key: String) -> SwipeFingerCount { defaults.integer(forKey: key) == 3 ? .Three : .Four }
+        s.ScrollDirection = bool("gesture.naturalScrolling", true) ? .Natural : .Standard
+        s.ScrollMomentum = bool("gesture.scrollMomentum", s.ScrollMomentum)
+        s.SecondaryClick = bool("gesture.secondaryClick", s.SecondaryClick)
+        s.LookUp = bool("gesture.lookUp", s.LookUp)
+        s.Zoom = bool("gesture.zoom", s.Zoom)
+        s.SmartZoom = bool("gesture.smartZoom", s.SmartZoom)
+        s.Rotate = bool("gesture.rotate", s.Rotate)
+        s.SwipeBetweenPages = bool("gesture.swipeBetweenPages", s.SwipeBetweenPages)
+        s.PagesTrigger = [0: .TwoFingerScroll, 1: .ThreeFingerSwipe, 2: .TwoOrThreeFingerSwipe][defaults.integer(forKey: "gesture.pagesTrigger")] ?? s.PagesTrigger
+        s.SwipeBetweenDesktops = bool("gesture.swipeBetweenFullScreenApps", s.SwipeBetweenDesktops)
+        s.DesktopsFingers = fingers("gesture.fullScreenAppsFingers")
+        s.MissionControl = bool("gesture.missionControl", s.MissionControl)
+        s.AppExpose = bool("gesture.appExpose", s.AppExpose)
+        s.MissionControlFingers = fingers("gesture.missionControlFingers")
+        s.Launchpad = bool("gesture.launchpad", s.Launchpad)
+        s.ShowDesktop = bool("gesture.showDesktop", s.ShowDesktop)
+        s.NotificationCenter = bool("gesture.notificationCenter", s.NotificationCenter)
+        s.linkExposeFingers()
+        return s
     }
 }
 
@@ -549,3 +513,118 @@ enum ConnectionState: Int {
 
 
 extension TUCScreen: @retroactive Identifiable {}
+
+
+// MARK: - Changing Settings from the Settings Window
+//
+// The settings window's engine, as T650Native's Engine.swift is for its window: settings are read and changed by name, and
+// a change that would move another setting (a gesture moved off a trigger it clashed with or turned off, App Exposé
+// following Mission Control's finger count) waits for the user to confirm it.
+
+/// A change that moves other settings too: the change, and each setting it moves, with what it is now and what it becomes.
+struct SettingsConfirmation: Identifiable {
+    struct Row: Identifiable {
+        let id: String
+        let symbol: String
+        let title: String
+        let from: String
+        let to: String
+    }
+
+    let id = UUID()
+    let change: Row
+    let others: [Row]
+    fileprivate let changes: [(name: String, value: SettingValue)]
+}
+
+extension TouchUp {
+
+    /// Touch Up's own settings that the catalog shows beside the gestures.
+    private static let parameterNames: Set<String> = ["DoubleClickDistance", "DragThreshold", "LongPressDuration"]
+
+    /// A setting's value by name: a gesture setting, or one of the click and drag parameters.
+    func value(_ name: String) -> SettingValue? {
+        switch name {
+        case "DoubleClickDistance": return .double(Double(doubleClickDistance))
+        case "DragThreshold": return .double(Double(dragThreshold))
+        case "LongPressDuration": return .double(longPressDuration)
+        default: return gestures[name]
+        }
+    }
+
+    /// Sets a setting, asking first if that would move other settings.
+    func set(_ name: String, to value: SettingValue) {
+        if Self.parameterNames.contains(name) {
+            guard let number = value.double else { return }
+            switch name {
+            case "DoubleClickDistance": doubleClickDistance = CGFloat(number)
+            case "DragThreshold": dragThreshold = CGFloat(number)
+            default: longPressDuration = number
+            }
+            return
+        }
+        guard gestures[name] != value else { return }
+        request([(name, value)])
+    }
+
+    /// A gesture with a method, as one choice: nil is Off. Otherwise the method is set, then the gesture turned on, in that
+    /// order and as one change (so turning it on resolves its clashes for the method just chosen).
+    func choose(toggle: String, method: String, value: String?) {
+        var changes: [(name: String, value: SettingValue)] = []
+        if let value {
+            if gestures[method] != .string(value) { changes.append((method, .string(value))) }
+            if gestures[toggle]?.bool != true { changes.append((toggle, .bool(true))) }
+        } else if gestures[toggle]?.bool == true {
+            changes.append((toggle, .bool(false)))
+        }
+        if !changes.isEmpty { request(changes) }
+    }
+
+    /// Makes the changes at once if they move nothing else; otherwise asks first.
+    private func request(_ changes: [(name: String, value: SettingValue)]) {
+        let preview = gestures.applying(changes).settings
+        let asked = Set(changes.map(\.name))
+        let moved = GestureSettings.names.filter { !asked.contains($0) && gestures[$0] != preview[$0] }
+
+        let mine = SettingsCatalog.groups(containing: asked)
+        let others = SettingsCatalog.groups(containing: moved).filter { group in !mine.contains { $0.id == group.id } }
+        guard let first = mine.first, !others.isEmpty else {
+            gestures = preview
+            return
+        }
+
+        let now: (String) -> SettingValue? = { self.value($0) }
+        let after: (String) -> SettingValue? = { preview[$0] ?? self.value($0) }
+        func row(_ group: SettingGroup) -> SettingsConfirmation.Row {
+            SettingsConfirmation.Row(id: group.id, symbol: group.symbol, title: group.title,
+                                     from: SettingsCatalog.describe(group, in: now), to: SettingsCatalog.describe(group, in: after))
+        }
+        confirmation = SettingsConfirmation(change: row(first), others: others.map(row), changes: changes)
+    }
+
+    func confirmSettingsChange() {
+        guard let pending = confirmation else { return }
+        confirmation = nil
+        gestures = gestures.applying(pending.changes).settings
+    }
+
+    func cancelSettingsChange() {
+        confirmation = nil
+    }
+
+    /// Every gesture, click and drag setting back to its default. Touchscreen settings are kept.
+    func resetSettingsToDefaults() {
+        gestures = .defaults
+        doubleClickDistance = 8
+        dragThreshold = 3
+        longPressDuration = 0.5
+        showSettingsNote("Settings reset to their defaults.")
+    }
+
+    func showSettingsNote(_ note: String) {
+        settingsNote = note
+        DispatchQueue.main.asyncAfter(deadline: .now() + 4) { [weak self] in
+            if self?.settingsNote == note { self?.settingsNote = nil }
+        }
+    }
+}

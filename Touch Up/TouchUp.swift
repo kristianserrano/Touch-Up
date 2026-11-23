@@ -1,6 +1,9 @@
 //
-//  Model.swift
+//  TouchUp.swift
 //  Touch Up
+//
+//  The app's model: the touch manager, the settings (gestures, click and drag parameters, each touchscreen's screen,
+//  size and rotation), and the touchscreen delegate. The settings window's engine is in SettingsEngine.swift.
 //
 //  Created by Sebastian Hueber on 03.02.23.
 //
@@ -15,22 +18,23 @@ class TouchUp: NSObject, ObservableObject {
     @Published var touches = [TUCTouch]()
     
     
-    var observers = [AnyCancellable]()
+    /// The subscriptions that hand each parameter to the touch manager and save it.
+    private var observers = [AnyCancellable]()
     
     @Published var isPublishingMouseEventsEnabled = true
     
     @Published var connectionState: ConnectionState = .disconnected
     
-    @Published var longPressDuration: TimeInterval = 0.5 // one finger resting this long presses the button
-    @Published var dragThreshold: CGFloat = 3 // mm one finger travels before it presses the button and drags
-    @Published var doubleClickDistance: CGFloat = 3 //mm
-    @Published var edgeDeadZone: CGFloat = 0 // border along the screen edges [pt] in which the cursor is never posted
-    @Published var errorResistance: NSInteger = 0 // num of Reports to wait before cancelling a touch
-    @Published var ignoreOriginTouches: Bool = false
-    @Published var isExclusiveAccessEnabled: Bool = false
+    @Published var longPressDuration = ParameterDefaults.longPressDuration     // s one finger rests before it presses
+    @Published var dragThreshold = ParameterDefaults.dragThreshold             // mm one finger travels before it drags
+    @Published var doubleClickDistance = ParameterDefaults.doubleClickDistance // mm two taps may be apart to double-click
+    @Published var edgeDeadZone = ParameterDefaults.edgeDeadZone               // pt along the screen edges never posted
+    @Published var errorResistance = ParameterDefaults.errorResistance         // reports to wait before cancelling a touch
+    @Published var ignoreOriginTouches = ParameterDefaults.ignoreOriginTouches
+    @Published var isExclusiveAccessEnabled = ParameterDefaults.isExclusiveAccessEnabled
 
     /// The trackpad gestures (named and ruled as in T650Native). Every change goes to the touch manager and is saved at once.
-    @Published private(set) var gestures = GestureSettings() {
+    @Published var gestures = GestureSettings() {
         didSet {
             touchManager.gestureSettings = gestures.core
             if let data = try? JSONEncoder().encode(gestures) {
@@ -40,12 +44,10 @@ class TouchUp: NSObject, ObservableObject {
     }
     static let gestureSettingsKey = "gestureSettings"
 
-    /// A change that moves other settings too, waiting for the user to confirm it (see `SettingsConfirmation`).
+    /// A change that moves other settings too, waiting for the user to confirm it (see SettingsEngine.swift).
     @Published var confirmation: SettingsConfirmation?
     /// A short note at the bottom of the settings window (a reset done), cleared after a few seconds.
     @Published var settingsNote: String?
-
-    @Published var areAdditionalDigitizerRotationSettingsVisible = false
 
 
     @Published var connectedScreens = [TUCScreen]()
@@ -125,31 +127,59 @@ class TouchUp: NSObject, ObservableObject {
 }
 
 
-// MARK: - Loading, Saving and Syncing Settings with Framework
+// MARK: - Parameters
+
+/// Magic Touch Up's own settings beside the gestures, and their defaults: one place for the property values, the
+/// registered defaults and Reset to Defaults.
+enum ParameterDefaults {
+    static let longPressDuration: TimeInterval = 0.5
+    static let dragThreshold: CGFloat = 3
+    static let doubleClickDistance: CGFloat = 8
+    static let edgeDeadZone: CGFloat = 0
+    static let errorResistance: NSInteger = 4
+    static let ignoreOriginTouches = true
+    static let isExclusiveAccessEnabled = false
+}
+
 extension TouchUp {
-    
+
+    /// The keys the parameters are saved under.
+    private enum Key {
+        static let longPressDuration = "longPressDuration"
+        static let dragThreshold = "dragThreshold"
+        static let doubleClickDistance = "doubleClickDistance"
+        static let edgeDeadZone = "edgeDeadZone"
+        static let errorResistance = "errorResistance"
+        static let ignoreOriginTouches = "ignoreOriginTouches"
+        static let isExclusiveAccessEnabled = "isExclusiveAccessEnabled"
+    }
+
+    /// Loads the saved settings, hands them to the touch manager, and from then on hands over and saves each change.
     func initPreferences() {
         let defaults = UserDefaults.standard
-        
-        defaults.register(defaults: [
-            "longPressDuration" : 0.5,
-            "dragThreshold" : 3,
-            "doubleClickDistance" : 8,
-            "edgeDeadZone" : 0,
-            "errorResistance" : 4,
-            "ignoreOriginTouches" : true,
-            "isExclusiveAccessEnabled" : false,
-            "areAdditionalDigitizerRotationSettingsVisible" : false,
-        ])
-        
-        longPressDuration = defaults.double(forKey: "longPressDuration")
-        dragThreshold = defaults.double(forKey: "dragThreshold")
-        doubleClickDistance = defaults.double(forKey: "doubleClickDistance")
-        edgeDeadZone = defaults.double(forKey: "edgeDeadZone")
-        errorResistance = defaults.integer(forKey: "errorResistance")
-        ignoreOriginTouches = defaults.bool(forKey: "ignoreOriginTouches")
-        isExclusiveAccessEnabled = defaults.bool(forKey: "isExclusiveAccessEnabled")
 
+        defaults.register(defaults: [
+            Key.longPressDuration: ParameterDefaults.longPressDuration,
+            Key.dragThreshold: ParameterDefaults.dragThreshold,
+            Key.doubleClickDistance: ParameterDefaults.doubleClickDistance,
+            Key.edgeDeadZone: ParameterDefaults.edgeDeadZone,
+            Key.errorResistance: ParameterDefaults.errorResistance,
+            Key.ignoreOriginTouches: ParameterDefaults.ignoreOriginTouches,
+            Key.isExclusiveAccessEnabled: ParameterDefaults.isExclusiveAccessEnabled,
+        ])
+
+        longPressDuration = defaults.double(forKey: Key.longPressDuration)
+        dragThreshold = defaults.double(forKey: Key.dragThreshold)
+        doubleClickDistance = defaults.double(forKey: Key.doubleClickDistance)
+        edgeDeadZone = defaults.double(forKey: Key.edgeDeadZone)
+        errorResistance = defaults.integer(forKey: Key.errorResistance)
+        ignoreOriginTouches = defaults.bool(forKey: Key.ignoreOriginTouches)
+        isExclusiveAccessEnabled = defaults.bool(forKey: Key.isExclusiveAccessEnabled)
+
+        /// Saves every change after the current value (which was just loaded).
+        func save<Value>(_ publisher: Published<Value>.Publisher, _ key: String) -> AnyCancellable {
+            publisher.dropFirst().sink { defaults.set($0, forKey: key) }
+        }
 
         self.observers = [
             $isPublishingMouseEventsEnabled.assign(to: \.postMouseEvents, on: touchManager),
@@ -159,34 +189,28 @@ extension TouchUp {
             $edgeDeadZone.assign(to: \.edgeDeadZone, on: touchManager),
             $errorResistance.assign(to: \.errorResistance, on: touchManager),
             $ignoreOriginTouches.assign(to: \.ignoreOriginTouches, on: touchManager),
-            
             $isExclusiveAccessEnabled.sink { [weak touchManager] seized in
                 touchManager?.setTouchscreensSeized(seized)
-            }
+            },
+
+            save($longPressDuration, Key.longPressDuration),
+            save($dragThreshold, Key.dragThreshold),
+            save($doubleClickDistance, Key.doubleClickDistance),
+            save($edgeDeadZone, Key.edgeDeadZone),
+            save($errorResistance, Key.errorResistance),
+            save($ignoreOriginTouches, Key.ignoreOriginTouches),
+            save($isExclusiveAccessEnabled, Key.isExclusiveAccessEnabled),
         ]
-        
-        
-        
+
         gestures = Self.loadGestureSettings(from: defaults)
-
-        areAdditionalDigitizerRotationSettingsVisible = defaults.bool(forKey: "areAdditionalDigitizerRotationSettingsVisible")
-    }
-    
-    
-    func savePreferences() {
-        let defaults = UserDefaults.standard
-        
-        defaults.set(longPressDuration, forKey: "longPressDuration")
-        defaults.set(dragThreshold, forKey: "dragThreshold")
-        defaults.set(doubleClickDistance, forKey: "doubleClickDistance")
-        defaults.set(edgeDeadZone, forKey: "edgeDeadZone")
-        defaults.set(errorResistance, forKey: "errorResistance")
-        defaults.set(ignoreOriginTouches, forKey: "ignoreOriginTouches")
-        defaults.set(isExclusiveAccessEnabled, forKey: "isExclusiveAccessEnabled")
-
-        defaults.set(areAdditionalDigitizerRotationSettingsVisible, forKey: "areAdditionalDigitizerRotationSettingsVisible")
     }
 
+    /// The click and drag parameters back to their defaults (the touchscreen options are kept).
+    func resetParametersToDefaults() {
+        doubleClickDistance = ParameterDefaults.doubleClickDistance
+        dragThreshold = ParameterDefaults.dragThreshold
+        longPressDuration = ParameterDefaults.longPressDuration
+    }
 }
 
 
@@ -228,30 +252,7 @@ extension TouchUp {
            let saved = try? JSONDecoder().decode(GestureSettings.self, from: data) {
             return saved
         }
-
-        var s = GestureSettings()
-        guard defaults.object(forKey: "gesture.zoom") != nil else { return s }
-        func bool(_ key: String, _ fallback: Bool) -> Bool { defaults.object(forKey: key) == nil ? fallback : defaults.bool(forKey: key) }
-        func fingers(_ key: String) -> SwipeFingerCount { defaults.integer(forKey: key) == 3 ? .Three : .Four }
-        s.ScrollDirection = bool("gesture.naturalScrolling", true) ? .Natural : .Standard
-        s.ScrollMomentum = bool("gesture.scrollMomentum", s.ScrollMomentum)
-        s.SecondaryClick = bool("gesture.secondaryClick", s.SecondaryClick)
-        s.LookUp = bool("gesture.lookUp", s.LookUp)
-        s.Zoom = bool("gesture.zoom", s.Zoom)
-        s.SmartZoom = bool("gesture.smartZoom", s.SmartZoom)
-        s.Rotate = bool("gesture.rotate", s.Rotate)
-        s.SwipeBetweenPages = bool("gesture.swipeBetweenPages", s.SwipeBetweenPages)
-        s.PagesTrigger = [0: .TwoFingerScroll, 1: .ThreeFingerSwipe, 2: .TwoOrThreeFingerSwipe][defaults.integer(forKey: "gesture.pagesTrigger")] ?? s.PagesTrigger
-        s.SwipeBetweenDesktops = bool("gesture.swipeBetweenFullScreenApps", s.SwipeBetweenDesktops)
-        s.DesktopsFingers = fingers("gesture.fullScreenAppsFingers")
-        s.MissionControl = bool("gesture.missionControl", s.MissionControl)
-        s.AppExpose = bool("gesture.appExpose", s.AppExpose)
-        s.MissionControlFingers = fingers("gesture.missionControlFingers")
-        s.Launchpad = bool("gesture.launchpad", s.Launchpad)
-        s.ShowDesktop = bool("gesture.showDesktop", s.ShowDesktop)
-        s.NotificationCenter = bool("gesture.notificationCenter", s.NotificationCenter)
-        s.linkExposeFingers()
-        return s
+        return GestureSettings.migratingLegacyKeys { defaults.object(forKey: $0) } ?? GestureSettings()
     }
 }
 
@@ -270,33 +271,25 @@ extension TouchUp {
         return connectedScreens.last
     }
 
-    /// Resolves the stored screen identity of a digitizer against the currently connected
-    /// screens. Priority: UUID (exact) → display ID (fallback) → most recent screen (implicit).
-    func resolvedMapping(forLocationID locationID: HIDLocationID) -> (screen: TUCScreen?, match: ScreenMatch) {
+    /// The screen a digitizer is on: its stored screen identity resolved against the connected screens. Priority: UUID
+    /// (exact) → display ID (fallback) → most recent screen (implicit). nil when no screen is connected.
+    func screen(forDigitizer locationID: HIDLocationID) -> TUCScreen? {
         let config = digitizerConfigs[locationID]
 
-        if let uuid = config?.screenUUID,
-           let screen = connectedScreens.first(where: { $0.uuid == uuid }) {
-            return (screen, .exact)
+        if let uuid = config?.screenUUID, let screen = connectedScreens.first(where: { $0.uuid == uuid }) {
+            return screen
         }
-
-        if let id = config?.screenID,
-           let screen = connectedScreens.first(where: { $0.id == id }) {
-            return (screen, .idFallback)
+        if let id = config?.screenID, let screen = connectedScreens.first(where: { $0.id == id }) {
+            return screen
         }
-
-        if let screen = newestScreen {
-            return (screen, .implicit)
-        }
-
-        return (nil, .unmapped)
+        return newestScreen
     }
 
     /// Explicitly assigns a screen to a digitizer (user action) and persists it immediately.
     /// Storing the UUID makes the mapping confirmed, so it survives rearrange/rotate/mirror.
     func assignScreen(_ screen: TUCScreen?, toDigitizer locationID: HIDLocationID) {
         guard var config = digitizerConfigs[locationID] else { return }
-        config.screenUUID = screen?.uuid
+        config.screenUUID = screen?.storedUUID
         config.screenID = screen.map { UInt($0.id) }
         digitizerConfigs[locationID] = config
         persistMapping(forLocationID: locationID)
@@ -320,25 +313,24 @@ extension TouchUp {
 
     /// The diagonal the display itself reports (EDID), in inches, or nil if it reports none.
     func reportedDiagonalInches(forDigitizer locationID: HIDLocationID) -> Double? {
-        guard let size = resolvedMapping(forLocationID: locationID).screen?.nativePhysicalSize,
-              size.width > 0, size.height > 0 else { return nil }
-        return Double(hypot(size.width, size.height)) / 25.4
+        guard let size = screen(forDigitizer: locationID)?.nativePhysicalSize else { return nil }
+        return ScreenSize.diagonalInches(of: size)
     }
 
     /// Freezes the currently resolved screen (id + uuid) and rotation of one digitizer into
     /// persistent storage. Covers both cases: an explicit user edit, and an implicit mapping
-    /// that worked fine and should stick (called for all digitizers before the window closes).
+    /// that worked fine and should stick (called for all digitizers on quit).
     func persistMapping(forLocationID locationID: HIDLocationID) {
         guard var config = digitizerConfigs[locationID] else { return }
 
         // Promote an as-yet-unconfirmed mapping (no stored UUID) to its currently resolved
         // screen — this is the "implicit mapping was fine, freeze it" case. A config that
         // already carries a UUID is a confirmed preference and is never overwritten here: if
-        // its panel is merely absent right now (`.idFallback` / `.unmapped`) the stored UUID
+        // its panel is merely absent right now (resolved only by display ID, or not at all) the stored UUID
         // must survive and reassert via an exact match once the panel returns.
-        if config.screenUUID == nil, let screen = resolvedMapping(forLocationID: locationID).screen {
+        if config.screenUUID == nil, let screen = screen(forDigitizer: locationID) {
             config.screenID = UInt(screen.id)
-            config.screenUUID = screen.uuid
+            config.screenUUID = screen.storedUUID
         }
 
         digitizerConfigs[locationID] = config
@@ -346,8 +338,8 @@ extension TouchUp {
         saveDigitizerConfigs()
     }
 
-    /// Persists the mapping of every currently connected digitizer. Call before the settings
-    /// window closes / on termination so implicit mappings become explicit next launch.
+    /// Persists the mapping of every currently connected digitizer. Called on quit, so implicit mappings become explicit
+    /// next launch.
     func persistAllDigitizerMappings() {
         for locationID in digitizerConfigs.keys {
             persistMapping(forLocationID: locationID)
@@ -361,7 +353,7 @@ extension TouchUp {
             return
         }
         let anyResolved = connectedDigitizers.contains {
-            resolvedMapping(forLocationID: $0.locationID).screen != nil
+            screen(forDigitizer: $0.locationID) != nil
         }
         connectionState = anyResolved ? .connectedPreferred : .uncertain
     }
@@ -371,9 +363,12 @@ extension TouchUp {
               let decoded = try? JSONDecoder().decode([String: DigitizerConfig].self, from: data)
         else { return }
 
-        // JSON object keys are strings; map them back to numeric location IDs.
+        // JSON object keys are strings; map them back to numeric location IDs. Earlier versions saved "" for a screen
+        // without a UUID, which would match any such screen: it means no UUID, so the display ID decides.
         persistedConfigs = Dictionary(uniqueKeysWithValues: decoded.compactMap { key, value in
-            HIDLocationID(key).map { ($0, value) }
+            var config = value
+            if config.screenUUID?.isEmpty == true { config.screenUUID = nil }
+            return HIDLocationID(key).map { ($0, config) }
         })
     }
 
@@ -395,7 +390,7 @@ extension TouchUp: TUCTouchDelegate {
     
     
     func touchscreen(forLocationID locationID: UInt32) -> TUCScreen? {
-        resolvedMapping(forLocationID: locationID).screen
+        screen(forDigitizer: locationID)
     }
 
     func digitizerRotation(forLocationID locationID: UInt32) -> CGFloat {
@@ -403,13 +398,10 @@ extension TouchUp: TUCTouchDelegate {
     }
 
     func physicalSize(forLocationID locationID: UInt32) -> CGSize {
-        // The user's diagonal, split by the screen's current aspect ratio (points are square).
+        // The user's diagonal, split by the screen's current aspect ratio; .zero (the reported size) when not set.
         guard let inches = digitizerConfigs[locationID]?.screenDiagonalInches, inches > 0,
-              let frame = resolvedMapping(forLocationID: locationID).screen?.frame,
-              frame.width > 0, frame.height > 0 else { return .zero }
-        let diagonalMM = inches * 25.4
-        let scale = diagonalMM / Double(hypot(frame.width, frame.height))
-        return CGSize(width: frame.width * scale, height: frame.height * scale)
+              let frame = screen(forDigitizer: locationID)?.frame else { return .zero }
+        return ScreenSize.visibleArea(diagonalInches: inches, aspect: frame.size)
     }
     
     func touchscreenDidConnect(withLocationID locationID: UInt32) {
@@ -437,57 +429,10 @@ extension TouchUp: TUCTouchDelegate {
 }
 
 
-extension TouchUp {
-    func uiLabels<T>(for keyPath: KeyPath<TouchUp, T>) -> (title:String, description:String) {
-        switch keyPath {
-        case \.isPublishingMouseEventsEnabled:
-            return("Control Mouse with Touch",
-                   "Turns the driver on or off.")
-            
-        case \.longPressDuration:
-            return("Press and Hold Delay",
-                   "How long one finger has to rest on the screen before it presses the mouse button, for menus that open on press and hold. Moving the finger presses it at once.")
-
-        case \.dragThreshold:
-            return("Drag Threshold",
-                   "How far (mm) one finger has to move before it drags. Lifting before that is a click. Increase it if taps turn into small drags.")
-
-        case \.doubleClickDistance:
-            return("Double Click Zone",
-                   "How many mm can two taps be apart from each other to qualify double click")
-
-        case \.edgeDeadZone:
-            return("Edge Dead Zone",
-                   "Increase this value, to prevent touches from triggering mouse events at the screen edge.")
-
-        case \.ignoreOriginTouches:
-            return("Ignore Origin Touches",
-                   "If your touchscreen randomly sends coordinate (0,0) in its datastream, toggle this option to make input more stable.")
-            
-        case \.errorResistance:
-            return("Error Resistance",
-                   "If your touchscreen is really unreliable at reporting touches, increase this slider to make inputs more stable at the cost of higher latency in detecting liftoffs.")
-            
-        case \.isExclusiveAccessEnabled:
-            return("Exclusive Access",
-                   "This option should mitigate undesired mouse events created on some devices.")
-        
-        case \.areAdditionalDigitizerRotationSettingsVisible:
-            return("Digitizer Rotation",
-                   "Adds a rotation control to each touchscreen. Only needed if the digitizer orientation in does not match your screen.")
-            
-        default:
-            return("\(keyPath)", "")
-        }
-    }
-}
-
-
 enum ConnectionState: Int {
     case uncertain
     case disconnected
-    case connectedHotPlug // connected as result from hot plugging within a few seconds
-    case connectedPreferred // connected with stored cues matching perfectly
+    case connectedPreferred // connected, and at least one touchscreen resolves to a screen
     
     var image: NSImage? {
         let image: NSImage?
@@ -505,126 +450,11 @@ enum ConnectionState: Int {
         
         return image
     }
-    
-    var isConnected: Bool {
-        return self == .connectedPreferred || self == .connectedHotPlug
-    }
 }
 
 
-extension TUCScreen: @retroactive Identifiable {}
-
-
-// MARK: - Changing Settings from the Settings Window
-//
-// The settings window's engine, as T650Native's Engine.swift is for its window: settings are read and changed by name, and
-// a change that would move another setting (a gesture moved off a trigger it clashed with or turned off, App Exposé
-// following Mission Control's finger count) waits for the user to confirm it.
-
-/// A change that moves other settings too: the change, and each setting it moves, with what it is now and what it becomes.
-struct SettingsConfirmation: Identifiable {
-    struct Row: Identifiable {
-        let id: String
-        let symbol: String
-        let title: String
-        let from: String
-        let to: String
-    }
-
-    let id = UUID()
-    let change: Row
-    let others: [Row]
-    fileprivate let changes: [(name: String, value: SettingValue)]
-}
-
-extension TouchUp {
-
-    /// Touch Up's own settings that the catalog shows beside the gestures.
-    private static let parameterNames: Set<String> = ["DoubleClickDistance", "DragThreshold", "LongPressDuration"]
-
-    /// A setting's value by name: a gesture setting, or one of the click and drag parameters.
-    func value(_ name: String) -> SettingValue? {
-        switch name {
-        case "DoubleClickDistance": return .double(Double(doubleClickDistance))
-        case "DragThreshold": return .double(Double(dragThreshold))
-        case "LongPressDuration": return .double(longPressDuration)
-        default: return gestures[name]
-        }
-    }
-
-    /// Sets a setting, asking first if that would move other settings.
-    func set(_ name: String, to value: SettingValue) {
-        if Self.parameterNames.contains(name) {
-            guard let number = value.double else { return }
-            switch name {
-            case "DoubleClickDistance": doubleClickDistance = CGFloat(number)
-            case "DragThreshold": dragThreshold = CGFloat(number)
-            default: longPressDuration = number
-            }
-            return
-        }
-        guard gestures[name] != value else { return }
-        request([(name, value)])
-    }
-
-    /// A gesture with a method, as one choice: nil is Off. Otherwise the method is set, then the gesture turned on, in that
-    /// order and as one change (so turning it on resolves its clashes for the method just chosen).
-    func choose(toggle: String, method: String, value: String?) {
-        var changes: [(name: String, value: SettingValue)] = []
-        if let value {
-            if gestures[method] != .string(value) { changes.append((method, .string(value))) }
-            if gestures[toggle]?.bool != true { changes.append((toggle, .bool(true))) }
-        } else if gestures[toggle]?.bool == true {
-            changes.append((toggle, .bool(false)))
-        }
-        if !changes.isEmpty { request(changes) }
-    }
-
-    /// Makes the changes at once if they move nothing else; otherwise asks first.
-    private func request(_ changes: [(name: String, value: SettingValue)]) {
-        let preview = gestures.applying(changes).settings
-        let asked = Set(changes.map(\.name))
-        let moved = GestureSettings.names.filter { !asked.contains($0) && gestures[$0] != preview[$0] }
-
-        let mine = SettingsCatalog.groups(containing: asked)
-        let others = SettingsCatalog.groups(containing: moved).filter { group in !mine.contains { $0.id == group.id } }
-        guard let first = mine.first, !others.isEmpty else {
-            gestures = preview
-            return
-        }
-
-        let now: (String) -> SettingValue? = { self.value($0) }
-        let after: (String) -> SettingValue? = { preview[$0] ?? self.value($0) }
-        func row(_ group: SettingGroup) -> SettingsConfirmation.Row {
-            SettingsConfirmation.Row(id: group.id, symbol: group.symbol, title: group.title,
-                                     from: SettingsCatalog.describe(group, in: now), to: SettingsCatalog.describe(group, in: after))
-        }
-        confirmation = SettingsConfirmation(change: row(first), others: others.map(row), changes: changes)
-    }
-
-    func confirmSettingsChange() {
-        guard let pending = confirmation else { return }
-        confirmation = nil
-        gestures = gestures.applying(pending.changes).settings
-    }
-
-    func cancelSettingsChange() {
-        confirmation = nil
-    }
-
-    /// Every gesture, click and drag setting back to its default. Touchscreen settings are kept.
-    func resetSettingsToDefaults() {
-        gestures = .defaults
-        doubleClickDistance = 8
-        dragThreshold = 3
-        longPressDuration = 0.5
-        showSettingsNote("Settings reset to their defaults.")
-    }
-
-    func showSettingsNote(_ note: String) {
-        settingsNote = note
-        DispatchQueue.main.asyncAfter(deadline: .now() + 4) { [weak self] in
-            if self?.settingsNote == note { self?.settingsNote = nil }
-        }
-    }
+extension TUCScreen: @retroactive Identifiable {
+    /// The UUID to store for this screen, or nil when macOS gives it none (TUCScreen's nil UUID arrives as ""), so the
+    /// display-ID fallback decides instead of the first screen without one.
+    var storedUUID: String? { uuid.isEmpty ? nil : uuid }
 }

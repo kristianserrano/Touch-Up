@@ -26,6 +26,7 @@ typedef struct {
 
     IOHIDQueueRef           queue;
     Boolean                 areElementRefsSet;
+    Boolean                 isTreePrinted;  // the element tree is printed once, not on every retry of IdentifyElements
     
     IOHIDElementRef         applicationCollectionElement;
     IOHIDElementRef         scanTimeElement;
@@ -275,9 +276,10 @@ void StoreInputValue(HIDDeviceState *device, IOHIDValueRef hidValue) {
 
 /**
  We need to inspect the HID tree as a whole once to see which elements are grouped into logical groups of touch data.
- Just pass in any element of the tree, the function will walk up the tree, search for the logical groups and rememeber them in the global variables.
+ Just pass in any element of the tree, the function will walk up the tree, search for the logical groups and remember them
+ in the device state. Returns whether it found any (if not, the next input value tries again).
  */
-void IdentifyElements(HIDDeviceState *device, IOHIDElementRef anyElement, Boolean printTree) {
+static Boolean IdentifyElements(HIDDeviceState *device, IOHIDElementRef anyElement, Boolean printTree) {
     
     // Walk up to the *application* collection (the touchscreen itself). Stopping at the first collection on the way
     // is wrong when the first value to arrive belongs to a finger: that is the finger's logical collection, which holds
@@ -299,6 +301,9 @@ void IdentifyElements(HIDDeviceState *device, IOHIDElementRef anyElement, Boolea
     
     
     CFArrayRef children = IOHIDElementGetChildren(applicationCollection);
+    if (children == NULL) {
+        return FALSE;  // no collection found above the element: nothing to identify
+    }
     CFIndex numChildren = CFArrayGetCount(children);
     
     if (printTree) {
@@ -320,7 +325,7 @@ void IdentifyElements(HIDDeviceState *device, IOHIDElementRef anyElement, Boolea
             if (printTree) {
                 printf(" > Logical collection %ld\n", i);
                 CFArrayRef grandchildren = IOHIDElementGetChildren(element);
-                for( CFIndex j=0; j<CFArrayGetCount(grandchildren); j++) {
+                for( CFIndex j=0; grandchildren && j<CFArrayGetCount(grandchildren); j++) {
                     IOHIDElementRef gch = (IOHIDElementRef)CFArrayGetValueAtIndex(grandchildren, j);
                     CFIndex page = IOHIDElementGetUsagePage(gch);
                     CFIndex usage = IOHIDElementGetUsage(gch);
@@ -351,6 +356,8 @@ void IdentifyElements(HIDDeviceState *device, IOHIDElementRef anyElement, Boolea
             }
         }
     }
+
+    return CFArrayGetCount(device->touchCollectionElements) > 0;
 }
 
 
@@ -432,9 +439,6 @@ void DispatchTouchDataForCollection(HIDDeviceState *device, IOHIDElementRef coll
     CFIndex tipSwitch = 0;
     CFIndex isValid = 0;
     
-    CFIndex width   = kCFNotFound;
-    CFIndex height  = kCFNotFound;
-    CFIndex azimuth = kCFNotFound;
     
     // get stored values of all touches
     for (CFIndex i=0; i<CFArrayGetCount(children); i++) {
@@ -468,22 +472,11 @@ void DispatchTouchDataForCollection(HIDDeviceState *device, IOHIDElementRef coll
                     tipSwitch = value;
                 } else if (usage == kHIDUsage_Dig_TouchValid) {
                     isValid = value;
-                } else if (usage == kHIDUsage_Dig_Width) {
-                    width = value;
-                } else if (usage == kHIDUsage_Dig_Height) {
-                    height = value;
-                } else if (usage == kHIDUsage_Dig_Azimuth) {
-                    azimuth = value;
                 }
             } // kHIDPage_Digitizer
         }
     }
     TouchInputManagerUpdateTouchPosition(gTouchManager, device->locationID, contactID, x, y, (int)tipSwitch, (int)isValid);
-    
-    //    if (width != kCFNotFound && height != kCFNotFound && azimuth != kCFNotFound) {
-    //        TouchInputManagerUpdateTouchSize(gTouchManager, contactID, (CGFloat)width, (CGFloat)height, (CGFloat)azimuth);
-    //    }
-    
 }
 
 
@@ -585,8 +578,8 @@ static void Handle_InputValueCallback (
 
     if(!device->areElementRefsSet) {
         IOHIDElementRef e = IOHIDValueGetElement(inIOHIDValueRef);
-        IdentifyElements(device, e, TRUE);
-        device->areElementRefsSet = TRUE;
+        device->areElementRefsSet = IdentifyElements(device, e, !device->isTreePrinted);
+        device->isTreePrinted = TRUE;
     }
     
     //PrintInput(inIOHIDValueRef);

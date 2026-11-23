@@ -15,8 +15,7 @@ import SwiftUI
 
 struct Glyph: Equatable {
     // As the catalog names them.
-    enum Motion: String { case tap, double, hold, doublehold, horizontal, vertical, up, down, edge, rotate, zoom, pinch, spread }
-    enum Corner: String { case left, right }
+    enum Motion: String { case tap, double, hold, horizontal, vertical, up, down, edge, rotate, zoom, pinch, spread }
     enum ScrollBar: String { case natural, standard }
 
     /// What the screen shows the gesture doing.
@@ -28,7 +27,6 @@ struct Glyph: Equatable {
     var fingers: Int
     var motion: Motion
     var scene: Scene = .desktop
-    var corner: Corner? = nil
     /// A second set of fingers taking turns with the first ("two or three-finger swipe", the scroll's up then down).
     var alt: Int? = nil
     var altReverse = false
@@ -57,6 +55,15 @@ struct GestureGlyphView: View {
     }
 }
 
+/// The desktop's wallpaper: a gradient, the same in the gesture pictures and the Touchscreens pane's display pictures.
+enum Wallpaper {
+    static let hue = 0.6
+
+    static func colors(hue: Double = hue) -> [Color] {
+        [Color(hue: hue, saturation: 0.55, brightness: 0.75), Color(hue: hue + 0.12, saturation: 0.45, brightness: 0.95)]
+    }
+}
+
 // -- geometry ---------------------------------------------------------------------------------------
 
 private let loop = 2.6                 // one pass of fingers landing, moving and lifting
@@ -71,8 +78,9 @@ private let menuBarHeight = 5.0
 private let dockRect = CGRect(x: 36, y: 77, width: 48, height: 5)
 // Where the fingers rest: the middle of the screen below the menu bar.
 private let center = CGPoint(x: 60, y: 48)
-private let cornerPoints: [Glyph.Corner: CGPoint] = [.left: CGPoint(x: 26, y: 72), .right: CGPoint(x: 94, y: 72)]
 private let scrollTravel = 24.0
+/// How far the fingers of a vertical swipe travel: a little less than the scroll, so they stay on the glass.
+private let verticalFingerTravel = scrollTravel * 0.85
 private let hand: [Int: [CGPoint]] = [
     2: [CGPoint(x: -12, y: 10), CGPoint(x: 12, y: -10)],
     4: [CGPoint(x: -20, y: 20), CGPoint(x: -10, y: -4), CGPoint(x: 6, y: -12), CGPoint(x: 22, y: -6)],
@@ -84,16 +92,26 @@ private let windowB = CGRect(x: 46, y: 28, width: 56, height: 42)
 // A page that fills most of the screen (scrolling, zooming, pages).
 private let pageWindow = CGRect(x: 13, y: 16, width: 94, height: 58)
 
+
+/// Where a picture is in its loop: shared by the fingers and the screen, so they move in step.
+private struct LoopClock {
+    let time: Double?   // nil: the still picture
+
+    var still: Bool { time == nil }
+
+    func phase(_ duration: Double) -> Double {
+        guard let time else { return 0 }
+        return time.truncatingRemainder(dividingBy: duration) / duration
+    }
+}
+
 private struct GlyphPainter {
     let glyph: Glyph
     let time: Double?   // nil: the still picture
 
-    private var still: Bool { time == nil }
-
-    private func phase(_ duration: Double) -> Double {
-        guard let time else { return 0 }
-        return time.truncatingRemainder(dividingBy: duration) / duration
-    }
+    private var clock: LoopClock { LoopClock(time: time) }
+    private var still: Bool { clock.still }
+    private func phase(_ duration: Double) -> Double { clock.phase(duration) }
 
     func draw(in context: inout GraphicsContext, size: CGSize) {
         let scale = min(size.width / glyphWidth, size.height / glyphHeight)
@@ -107,7 +125,7 @@ private struct GlyphPainter {
         ScreenPainter(glyph: glyph, time: time).draw(in: &glass)
 
         let edge = glyph.motion == .edge
-        let origin = glyph.corner.flatMap { cornerPoints[$0] } ?? CGPoint(x: edge ? 98 : center.x, y: center.y)
+        let origin = CGPoint(x: edge ? 98 : center.x, y: center.y)
 
         if let alt = glyph.alt {
             drawFingers(in: &context, count: glyph.fingers, origin: origin, turn: .first, reverse: false)
@@ -182,7 +200,6 @@ private struct GlyphPainter {
                     ring = Keyframes.rippleTwice.sample(phase(loop))
                 case (.zoom, nil): finger = Keyframes.zoomInOut.sample(phase(loop))
                 case (.hold, nil): finger = Keyframes.pressAndMove.sample(phase(loop))
-                case (.doublehold, nil): finger = Keyframes.doubleTapHoldMove.sample(phase(loop))
                 case (.rotate, nil): finger = [0, 1, 1]
                 default: finger = Keyframes.glide.sample(phase(loop))
                 }
@@ -195,7 +212,7 @@ private struct GlyphPainter {
             }
 
             let point = CGPoint(x: base.x + from.x + (to.x - from.x) * finger[0], y: base.y + from.y + (to.y - from.y) * finger[0])
-            let radius = ([.hold, .doublehold].contains(motion) ? 7.0 : 5.0) * finger[1]
+            let radius = (motion == .hold ? 7.0 : 5.0) * finger[1]
             let dot = Path(ellipseIn: CGRect(x: point.x - radius, y: point.y - radius, width: radius * 2, height: radius * 2))
             // A fingertip on the glass: the accent colour with a light rim, so it reads over any wallpaper.
             layer.fill(dot, with: .color(.accentColor.opacity(finger[2] * 0.9)))
@@ -210,10 +227,10 @@ private struct GlyphPainter {
             // From a third of the way in, stopping short enough that the outermost finger stays on the screen.
             let half = Double(count - 1) / 2 * gap
             return (CGPoint(x: max(-18, 22 - (origin.x - half)), y: 0), CGPoint(x: min(30, 98 - (origin.x + half)), y: 0))
-        case .vertical, .up: return (CGPoint(x: 0, y: scrollTravel * 0.85), CGPoint(x: 0, y: -scrollTravel * 0.85))
-        case .down: return (CGPoint(x: 0, y: -scrollTravel * 0.85), CGPoint(x: 0, y: scrollTravel * 0.85))
+        case .vertical, .up: return (CGPoint(x: 0, y: verticalFingerTravel), CGPoint(x: 0, y: -verticalFingerTravel))
+        case .down: return (CGPoint(x: 0, y: -verticalFingerTravel), CGPoint(x: 0, y: verticalFingerTravel))
         case .edge: return (.zero, CGPoint(x: -52, y: 0))
-        case .hold, .doublehold: return (.zero, CGPoint(x: 26, y: 0))
+        case .hold: return (.zero, CGPoint(x: 26, y: 0))
         default: return nil
         }
     }
@@ -312,12 +329,9 @@ private struct ScreenPainter {
     let glyph: Glyph
     let time: Double?
 
-    private var still: Bool { time == nil }
-
-    private func phase(_ duration: Double) -> Double {
-        guard let time else { return 0 }
-        return time.truncatingRemainder(dividingBy: duration) / duration
-    }
+    private var clock: LoopClock { LoopClock(time: time) }
+    private var still: Bool { clock.still }
+    private func phase(_ duration: Double) -> Double { clock.phase(duration) }
 
     /// 0 at rest, 1 when the gesture is done; follows a gliding finger and eases back before the loop starts again.
     private var glide: Double { still ? 0 : Keyframes.screenGlide.sample(phase(loop))[0] }
@@ -490,11 +504,8 @@ private struct ScreenPainter {
 
     // -- pieces of the desktop
 
-    private func drawWallpaper(in context: inout GraphicsContext, hue: Double = 0.6) {
-        let gradient = Gradient(colors: [
-            Color(hue: hue, saturation: 0.55, brightness: 0.75),
-            Color(hue: hue + 0.12, saturation: 0.45, brightness: 0.95),
-        ])
+    private func drawWallpaper(in context: inout GraphicsContext, hue: Double = Wallpaper.hue) {
+        let gradient = Gradient(colors: Wallpaper.colors(hue: hue))
         context.fill(Path(screen), with: .linearGradient(gradient, startPoint: CGPoint(x: screen.minX, y: screen.minY),
                                                           endPoint: CGPoint(x: screen.maxX, y: screen.maxY)))
     }
@@ -536,10 +547,7 @@ private struct ScreenPainter {
         var layer = context
         layer.opacity = opacity
         let shape = Path(roundedRect: rect, cornerRadius: 2.5)
-        layer.drawLayer { shadow in
-            shadow.addFilter(.shadow(color: .black.opacity(0.25), radius: 1.5, y: 0.8))
-            shadow.fill(shape, with: .color(paper))
-        }
+        fillWithShadow(shape, paper, in: &layer, opacity: 0.25)
         layer.stroke(shape, with: .color(.black.opacity(0.15)), lineWidth: 0.5)
         let bar = min(5, rect.height * 0.18)
         for (i, color) in [Color.red, .yellow, .green].enumerated() {
@@ -619,10 +627,7 @@ private struct ScreenPainter {
         var layer = context
         layer.opacity = opacity
         let shape = Path(roundedRect: rect, cornerRadius: 2.5)
-        layer.drawLayer { shadow in
-            shadow.addFilter(.shadow(color: .black.opacity(0.35), radius: 2, y: 1))
-            shadow.fill(shape, with: .color(paper))
-        }
+        fillWithShadow(shape, paper, in: &layer, opacity: 0.35, radius: 2, y: 1)
         let rowHeight = (rect.height - 4) / Double(rows)
         for i in 0..<rows {
             let y = rect.minY + 2 + Double(i) * rowHeight
@@ -643,10 +648,7 @@ private struct ScreenPainter {
         shape.move(to: CGPoint(x: tip.x - 4, y: rect.maxY))
         shape.addLine(to: CGPoint(x: tip.x, y: rect.maxY + 4))
         shape.addLine(to: CGPoint(x: tip.x + 4, y: rect.maxY))
-        layer.drawLayer { shadow in
-            shadow.addFilter(.shadow(color: .black.opacity(0.35), radius: 2, y: 1))
-            shadow.fill(shape, with: .color(paper))
-        }
+        fillWithShadow(shape, paper, in: &layer, opacity: 0.35, radius: 2, y: 1)
         layer.fill(Path(roundedRect: CGRect(x: rect.minX + 4, y: rect.minY + 3, width: 20, height: 2.4), cornerRadius: 1.2), with: .color(ink.opacity(0.6)))
         for i in 0..<3 {
             layer.fill(Path(roundedRect: CGRect(x: rect.minX + 4, y: rect.minY + 8 + Double(i) * 4, width: (rect.width - 8) * [0.9, 0.75, 0.5][i], height: 1.6), cornerRadius: 0.8),
@@ -676,10 +678,7 @@ private struct ScreenPainter {
         page.addLine(to: CGPoint(x: rect.maxX, y: rect.maxY))
         page.addLine(to: CGPoint(x: rect.minX, y: rect.maxY))
         page.closeSubpath()
-        layer.drawLayer { shadow in
-            shadow.addFilter(.shadow(color: .black.opacity(lifted ? 0.45 : 0.2), radius: lifted ? 2.5 : 1, y: lifted ? 1.5 : 0.5))
-            shadow.fill(page, with: .color(.white))
-        }
+        fillWithShadow(page, .white, in: &layer, opacity: lifted ? 0.45 : 0.2, radius: lifted ? 2.5 : 1, y: lifted ? 1.5 : 0.5)
         for i in 0..<3 {
             layer.fill(Path(CGRect(x: rect.minX + 2, y: rect.minY + 4 + Double(i) * 2.5, width: 6, height: 1)), with: .color(.black.opacity(0.3)))
         }
@@ -690,10 +689,7 @@ private struct ScreenPainter {
         layer.translateBy(x: c.x, y: c.y)
         layer.rotate(by: .degrees(degrees))
         let frame = CGRect(x: -22, y: -15, width: 44, height: 30)
-        layer.drawLayer { shadow in
-            shadow.addFilter(.shadow(color: .black.opacity(0.3), radius: 1.5, y: 0.8))
-            shadow.fill(Path(frame), with: .color(.white))
-        }
+        fillWithShadow(Path(frame), .white, in: &layer)
         let picture = frame.insetBy(dx: 2, dy: 2)
         layer.fill(Path(picture), with: .linearGradient(Gradient(colors: [Color(hue: 0.55, saturation: 0.5, brightness: 0.95), Color(hue: 0.12, saturation: 0.6, brightness: 0.95)]),
                                                          startPoint: CGPoint(x: 0, y: picture.minY), endPoint: CGPoint(x: 0, y: picture.maxY)))
@@ -723,6 +719,15 @@ private struct ScreenPainter {
                          with: .color(.black.opacity(0.45)))
             context.fill(Path(roundedRect: CGRect(x: card.minX + 9, y: card.minY + 7, width: card.width - 16, height: 1.4), cornerRadius: 0.7),
                          with: .color(.black.opacity(0.25)))
+        }
+    }
+
+    /// Fills a shape with a soft shadow under it (windows, menus, popovers, the file, the photo).
+    private func fillWithShadow(_ shape: Path, _ fill: Color, in context: inout GraphicsContext,
+                                opacity: Double = 0.3, radius: Double = 1.5, y: Double = 0.8) {
+        context.drawLayer { layer in
+            layer.addFilter(.shadow(color: .black.opacity(opacity), radius: radius, y: y))
+            layer.fill(shape, with: .color(fill))
         }
     }
 
@@ -770,10 +775,6 @@ private struct Keyframes {
     // The fingers. [progress, scale, opacity]
     static let glide = Keyframes(keys: [(0, [0, 0.6, 0]), (0.12, [0, 1, 1]), (0.68, [1, 1, 1]), (0.82, [1, 1, 1]), (0.96, [1, 0.6, 0]), (1, [1, 0.6, 0])])
     static let zoomInOut = Keyframes(keys: [(0, [0, 0.6, 0]), (0.10, [0, 1, 1]), (0.42, [1, 1, 1]), (0.52, [1, 1, 1]), (0.84, [0, 1, 1]), (0.96, [0, 0.6, 0]), (1, [0, 0.6, 0])])
-    static let doubleTapHoldMove = Keyframes(keys: [
-        (0, [0, 0.5, 0]), (0.04, [0, 1, 1]), (0.11, [0, 0.85, 1]), (0.16, [0, 0.5, 0]), (0.24, [0, 0.5, 0]), (0.30, [0, 1, 1]),
-        (0.42, [0, 1.35, 1]), (0.52, [0, 1.35, 1]), (0.78, [1, 1.35, 1]), (0.88, [1, 1.35, 1]), (1, [1, 0.6, 0]),
-    ])
     static let glideFirst = Keyframes(keys: [(0, [0, 0.6, 0]), (0.06, [0, 1, 1]), (0.34, [1, 1, 1]), (0.40, [1, 1, 1]), (0.48, [1, 0.6, 0]), (1, [1, 0.6, 0])])
     static let glideSecond = Keyframes(keys: [(0, [0, 0.6, 0]), (0.50, [0, 0.6, 0]), (0.56, [0, 1, 1]), (0.84, [1, 1, 1]), (0.90, [1, 1, 1]), (0.98, [1, 0.6, 0]), (1, [1, 0.6, 0])])
     static let pressAndMove = Keyframes(keys: [(0, [0, 0.5, 0]), (0.10, [0, 1, 1]), (0.30, [0, 1.35, 1]), (0.48, [0, 1.35, 1]), (0.78, [1, 1.35, 1]), (0.88, [1, 1.35, 1]), (1, [1, 0.6, 0])])

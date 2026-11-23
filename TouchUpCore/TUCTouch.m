@@ -22,8 +22,6 @@
         _isOnSurface = true;
         _confidenceFlag = false;
         
-        _size = CGSizeZero;
-        _azimuth = 0;
         
         
         _lastUpdated = 0;
@@ -64,23 +62,6 @@
     _location = location;
 }
 
-
-
-#pragma mark - Gesture Detection
-
-
-- (CGPoint)trajectory {
-    CGPoint p1 = [self location];
-    CGPoint p2 = [self previousLocation];
-    return CGPointMake(p1.x - p2.x,
-                       p1.y - p2.y);
-}
-
-- (CGPoint)trajectorySign {
-    CGPoint p = [self trajectory];
-    return CGPointMake(p.x < 0 ? -1 : p.x > 0 ? 1 : 0,
-                       p.y < 0 ? -1 : p.y > 0 ? 1 : 0);
-}
 
 
 #pragma mark - Utility

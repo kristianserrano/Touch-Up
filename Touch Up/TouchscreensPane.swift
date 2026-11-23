@@ -1,5 +1,5 @@
 //
-//  DigitizerMappingView.swift
+//  TouchscreensPane.swift
 //  Touch Up
 //
 //  Created by Sebastian Hueber on 04.06.26.
@@ -20,7 +20,7 @@ struct TouchscreensPane: View {
 
     /// The display shown below the carousel: the chosen one, else the first with a touchscreen, else the first.
     private var screen: TUCScreen? {
-        model.connectedScreens.first { $0.uuid == selectedScreen }
+        model.connectedScreens.first { $0.stableID == selectedScreen }
             ?? model.connectedScreens.first { !digitizers(on: $0).isEmpty }
             ?? model.connectedScreens.first
     }
@@ -34,7 +34,7 @@ struct TouchscreensPane: View {
             }
 
             Section {
-                DisplayCarousel(model: model, selected: screen?.uuid) { selectedScreen = $0.uuid }
+                DisplayCarousel(model: model, selected: screen?.stableID) { selectedScreen = $0.stableID }
             }
 
             if let screen {
@@ -137,7 +137,8 @@ struct TouchscreensPane: View {
                 model.setScreenDiagonal(nil, forDigitizer: digitizer.locationID)
             }
             ForEach(sizes, id: \.self) { inches in
-                SizeRow(label: Self.inchesLabel(inches), detail: physicalLabel(size(inches, on: screen)), selected: chosen == inches) {
+                SizeRow(label: Self.inchesLabel(inches), detail: physicalLabel(ScreenSize.visibleArea(diagonalInches: inches, aspect: screen.frame.size)),
+                        selected: chosen == inches) {
                     model.setScreenDiagonal(inches, forDigitizer: digitizer.locationID)
                 }
             }
@@ -165,25 +166,19 @@ struct TouchscreensPane: View {
 
     // MARK: Helpers
 
+    /// Screen diagonals in inches: the common ones, and the rest that Show all sizes adds.
+    private static let commonSizes: [Double] = [7, 10.1, 13.3, 15.6, 21.5, 23.8, 27, 32]
+    private static let moreSizes: [Double] = [8, 11.6, 12.3, 14, 16, 17.3, 19, 24, 34, 43, 55]
+
     /// The common sizes, or every size with Show all sizes, and always the one chosen.
     private func listedSizes(including chosen: Double?) -> [Double] {
-        let common: [Double] = [7, 10.1, 13.3, 15.6, 21.5, 23.8, 27, 32]
-        let more: [Double] = [8, 11.6, 12.3, 14, 16, 17.3, 19, 24, 34, 43, 55]
-        var sizes = showingAllSizes ? (common + more).sorted() : common
+        var sizes = showingAllSizes ? (Self.commonSizes + Self.moreSizes).sorted() : Self.commonSizes
         if let chosen, !sizes.contains(chosen) { sizes = (sizes + [chosen]).sorted() }
         return sizes
     }
 
     private func digitizers(on screen: TUCScreen) -> [Digitizer] {
-        model.connectedDigitizers.filter { model.resolvedMapping(forLocationID: $0.locationID).screen?.uuid == screen.uuid }
-    }
-
-    /// The visible area of a screen of this diagonal, with this screen's aspect ratio.
-    private func size(_ inches: Double, on screen: TUCScreen) -> CGSize {
-        let frame = screen.frame.size
-        guard frame.width > 0, frame.height > 0 else { return .zero }
-        let scale = inches * 25.4 / Double(hypot(frame.width, frame.height))
-        return CGSize(width: frame.width * scale, height: frame.height * scale)
+        model.connectedDigitizers.filter { model.screen(forDigitizer: $0.locationID)?.stableID == screen.stableID }
     }
 
     private func physicalLabel(_ size: CGSize) -> String {
@@ -235,12 +230,12 @@ private struct DisplayCarousel: View {
     var body: some View {
         ScrollView(.horizontal, showsIndicators: false) {
             HStack(alignment: .bottom, spacing: 28) {
-                ForEach(model.connectedScreens, id: \.uuid) { screen in
+                ForEach(model.connectedScreens, id: \.stableID) { screen in
                     let touch = model.connectedDigitizers.contains {
-                        model.resolvedMapping(forLocationID: $0.locationID).screen?.uuid == screen.uuid
+                        model.screen(forDigitizer: $0.locationID)?.stableID == screen.stableID
                     }
                     Button { select(screen) } label: {
-                        DisplayThumbnail(screen: screen, hasTouch: touch, isSelected: screen.uuid == selected)
+                        DisplayThumbnail(screen: screen, hasTouch: touch, isSelected: screen.stableID == selected)
                     }
                     .buttonStyle(.plain)
                 }
@@ -267,9 +262,7 @@ private struct DisplayThumbnail: View {
                     .fill(Color(white: 0.1))
                     .overlay {
                         RoundedRectangle(cornerRadius: 3)
-                            .fill(LinearGradient(colors: [Color(hue: 0.6, saturation: 0.55, brightness: 0.75),
-                                                          Color(hue: 0.72, saturation: 0.45, brightness: 0.95)],
-                                                 startPoint: .topLeading, endPoint: .bottomTrailing))
+                            .fill(LinearGradient(colors: Wallpaper.colors(), startPoint: .topLeading, endPoint: .bottomTrailing))
                             .padding(4)
                     }
                     .overlay {
@@ -311,6 +304,7 @@ private struct DisplayThumbnail: View {
 /// The troubleshooting options, behind Advanced… as the Displays pane keeps its own.
 private struct AdvancedTouchSheet: View {
     @ObservedObject var model: TouchUp
+    private static let size = CGSize(width: 520, height: 420)
     @Environment(\.dismiss) private var dismiss
 
     var body: some View {
@@ -319,18 +313,22 @@ private struct AdvancedTouchSheet: View {
                 Section {
                     let errorResistance = Binding { Double(model.errorResistance) } set: { model.errorResistance = NSInteger(Int($0)) }
                     Slider(value: errorResistance, in: 0...10, step: 1) {
-                        SettingsExplanationLabel(labels: model.uiLabels(for: \.errorResistance))
+                        Text("Error resistance")
+                        Text("If your touchscreen is unreliable at reporting touches, increase this to make input steadier, at the cost of noticing lifts later.")
                     }
                     Slider(value: $model.edgeDeadZone, in: 0...30, step: 5) {
-                        SettingsExplanationLabel(labels: model.uiLabels(for: \.edgeDeadZone))
+                        Text("Edge dead zone")
+                        Text("Keeps touches this far (points) from the screen's edges, so they don't land on the edge itself.")
                     }
                 }
                 Section {
                     Toggle(isOn: $model.ignoreOriginTouches) {
-                        SettingsExplanationLabel(labels: model.uiLabels(for: \.ignoreOriginTouches))
+                        Text("Ignore origin touches")
+                        Text("If your touchscreen now and then reports a touch at the corner (0, 0), turn this on to ignore it.")
                     }
                     Toggle(isOn: $model.isExclusiveAccessEnabled) {
-                        SettingsExplanationLabel(labels: model.uiLabels(for: \.isExclusiveAccessEnabled))
+                        Text("Exclusive access")
+                        Text("Stops macOS from also treating the touchscreen as a mouse, which can cause stray clicks on some screens.")
                     }
                 }
             }
@@ -343,6 +341,15 @@ private struct AdvancedTouchSheet: View {
             }
             .padding()
         }
-        .frame(width: 520, height: 420)
+        .frame(width: Self.size.width, height: Self.size.height)
+    }
+}
+
+
+extension TUCScreen {
+    /// Identifies the screen in the views: its UUID, or its display ID when macOS gives it no UUID (two such screens must
+    /// not count as the same one).
+    var stableID: String {
+        uuid.isEmpty ? "display-\(id)" : uuid  // a nil UUID from TUCScreen arrives as ""
     }
 }

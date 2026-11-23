@@ -216,9 +216,7 @@ static TUCNativeSwipeEvent TUCMakeSwipe(uint32_t cgType, int64_t subtype, int64_
                 self.routeSubtype = TUCSubtypeDockSwipe;
                 return YES;
             }
-            BOOL pagesUseThree = s.pagesTrigger == TUCPagesTriggerThreeFingerSwipe || s.pagesTrigger == TUCPagesTriggerTwoOrThreeFingerSwipe;
-            BOOL pagesUseTwo = s.pagesTrigger == TUCPagesTriggerTwoFingerScroll || s.pagesTrigger == TUCPagesTriggerTwoOrThreeFingerSwipe;
-            if (s.swipeBetweenPages && ((fingers == 3 && pagesUseThree) || (fingers == 2 && pagesUseTwo))) {
+            if ([s swipesBetweenPagesWithFingers:fingers]) {
                 self.routeType = TUCEventTypeGesture;
                 self.routeSubtype = TUCSubtypeNavigationSwipe;
                 return YES;
@@ -407,11 +405,24 @@ static void TUCWriteLE32(uint8_t *b, size_t at, int32_t v) {
 @end
 
 
+#pragma mark - Recording
+
+BOOL TUCRecordingEnabled(void) {
+    static BOOL recording;
+    static dispatch_once_t once;
+    dispatch_once(&once, ^{ recording = getenv("TOUCHUP_RECORD") != NULL; });
+    return recording;
+}
+
+
 #pragma mark - Scroll velocity & momentum
 
+/// A full flick, in mm/s: the scroll boost is at its most from here, and so is the momentum's longer coasting.
+static const double TUCFullFlickSpeed = 270;
+
 double TUCScrollBoost(double mmPerSecond) {
-    static const double slow = 70, fast = 270, maxBoost = 5;
-    double t = fmax(0, fmin(1, (mmPerSecond - slow) / (fast - slow)));
+    static const double precise = 70, maxBoost = 5;  // slower than this follows the fingers; 5 extra is 6x in all
+    double t = fmax(0, fmin(1, (mmPerSecond - precise) / (TUCFullFlickSpeed - precise)));
     return 1 + maxBoost * t * t;
 }
 
@@ -419,8 +430,9 @@ double TUCScrollBoost(double mmPerSecond) {
     NSMutableArray<NSArray<NSNumber *> *> *_samples; // [t, dx, dy]
 }
 
-static const double TUCVelocityWindow = 0.10;  // the speed is the travel over the last 100 ms
+static const double TUCVelocityWindow = 0.10;  // the speed is the travel over (at most) the last 100 ms
 static const double TUCVelocityStale = 0.06;   // no movement for this long before the lift: no speed
+static const double TUCVelocityMinSpan = 0.02; // a single sample is taken as at least this long a movement
 
 - (instancetype)init {
     if (self = [super init]) _samples = [NSMutableArray new];
@@ -438,14 +450,24 @@ static const double TUCVelocityStale = 0.06;   // no movement for this long befo
     if (_samples.count == 0 || now - _samples.lastObject[0].doubleValue > TUCVelocityStale) {
         return CGVectorMake(0, 0);
     }
-    double sx = 0, sy = 0;
+    double sx = 0, sy = 0, first = 0, last = 0;
+    NSInteger n = 0;
     for (NSArray<NSNumber *> *s in _samples) {
-        if (now - s[0].doubleValue <= TUCVelocityWindow) {
-            sx += s[1].doubleValue;
-            sy += s[2].doubleValue;
-        }
+        double t = s[0].doubleValue;
+        if (now - t > TUCVelocityWindow) continue;
+        if (n == 0) first = t;
+        last = t;
+        sx += s[1].doubleValue;
+        sy += s[2].doubleValue;
+        n++;
     }
-    return CGVectorMake(sx / TUCVelocityWindow, sy / TUCVelocityWindow);
+    if (n == 0) return CGVectorMake(0, 0);
+
+    // Over the time the samples really cover: each sample is the movement since the frame before it, so the span runs
+    // from one frame before the first. Dividing by the whole window would read a 40 ms flick at 40% of its speed.
+    double frame = n > 1 ? (last - first) / (n - 1) : TUCVelocityMinSpan;
+    double span = fmax(TUCVelocityMinSpan, now - first + frame);
+    return CGVectorMake(sx / span, sy / span);
 }
 
 - (void)reset {
@@ -461,23 +483,22 @@ static const double TUCVelocityStale = 0.06;   // no movement for this long befo
 
 // From T650Native ScrollMomentum, converted from T650 device units (~22 per mm) to mm/s.
 static const double TUCMomentumTimeConstant = 0.35;  // seconds for the speed to fall to 1/e, for an ordinary stroke
-static const double TUCMomentumFlickFloor = 45;      // mm/s: below this a stroke is ordinary...
-static const double TUCMomentumFlickSpeed = 270;     // ...to here, where it is a full flick
+static const double TUCMomentumFlickFloor = 45;      // mm/s: below this a stroke is ordinary, up to a full flick
 static const double TUCMomentumFlickBoost = 2.0;     // a full flick coasts (1 + this) times as long
 static const double TUCMomentumStartSpeed = 27;      // mm/s needed to start coasting
 static const double TUCMomentumStopSpeed = 3;        // mm/s: below this it has come to rest
 
 - (instancetype)init {
-    if (self = [super init]) _pointsPerMM = 4;
+    if (self = [super init]) _pointsPerMM = TUCFallbackPointsPerMM;
     return self;
 }
 
 - (BOOL)startWithVelocity:(CGVector)v {
-    double ppmm = self.pointsPerMM > 0 ? self.pointsPerMM : 4;
+    double ppmm = self.pointsPerMM > 0 ? self.pointsPerMM : TUCFallbackPointsPerMM;
     double speedMM = hypot(v.dx, v.dy) / ppmm;
     if (speedMM < TUCMomentumStartSpeed) return NO;
 
-    double flick = fmax(0, fmin(1, (speedMM - TUCMomentumFlickFloor) / (TUCMomentumFlickSpeed - TUCMomentumFlickFloor)));
+    double flick = fmax(0, fmin(1, (speedMM - TUCMomentumFlickFloor) / (TUCFullFlickSpeed - TUCMomentumFlickFloor)));
     _tau = TUCMomentumTimeConstant * (1 + TUCMomentumFlickBoost * flick);
     _vx = v.dx;
     _vy = v.dy;
@@ -496,7 +517,7 @@ static const double TUCMomentumStopSpeed = 3;        // mm/s: below this it has 
     _vx *= decay;
     _vy *= decay;
 
-    double ppmm = self.pointsPerMM > 0 ? self.pointsPerMM : 4;
+    double ppmm = self.pointsPerMM > 0 ? self.pointsPerMM : TUCFallbackPointsPerMM;
     BOOL done = hypot(_vx, _vy) / ppmm < TUCMomentumStopSpeed;
     if (done) _active = NO;
     if (last) *last = done;

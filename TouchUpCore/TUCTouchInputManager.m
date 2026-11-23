@@ -10,8 +10,7 @@
 #import "HIDInterpreter.h"
 #import "TUCGestureRecognizer.h"
 #import "TUCGestureOutput.h"
-
-#import <time.h>
+#import "TUCTouchInputManager-C.h"
 
 @interface TUCTouchInputManager ()
 
@@ -25,10 +24,6 @@
 
 /// Shared by all digitizers: there is one cursor.
 @property (strong) TUCGestureOutput *output;
-
-/// Set TOUCHUP_RECORD=1 in the environment to print every frame and recognised event to stdout, for replaying real
-/// strokes in Tests/ (e.g. `open --env TOUCHUP_RECORD=1 --stdout frames.txt "Touch Up.app"`).
-@property BOOL recordFrames;
 
 @end
 
@@ -50,7 +45,14 @@
 }
 
 - (void)stop {
+    // Let go of whatever is held, and make every pending lift check stale, so nothing is posted after stopping.
     [self.output reset];
+    for (TUCGestureRecognizer *recognizer in self.recognizersByLocationID.allValues) {
+        [recognizer reset];
+    }
+    for (NSNumber *locationID in self.reportGenerationByLocationID.allKeys) {
+        [self invalidateLiftChecksForLocationID:locationID.unsignedIntValue];
+    }
     CloseHIDManager();
 }
 
@@ -67,7 +69,26 @@
 - (void)didDisconnectTouchscreenWithLocationID:(uint32_t)locationID {
     [self.frameIDsByLocationID removeObjectForKey:@(locationID)];
     [self.recognizersByLocationID removeObjectForKey:@(locationID)];
-    [self.output reset];
+    [self invalidateLiftChecksForLocationID:locationID];
+
+    // Its fingers are gone. A held button is let go whatever happens: the output does not know which touchscreen holds
+    // it, and if it was this one, nothing else would release it (another screen's drag ends too, the lesser harm). The
+    // rest of the output is reset unless another touchscreen is in the middle of a gesture.
+    BOOL otherTouches = NO;
+    for (TUCTouch *touch in [self.touchSet copy]) {
+        if (touch.locationID == locationID) {
+            [self.touchSet removeObject:touch];
+        } else if (touch.isActive) {
+            otherTouches = YES;
+        }
+    }
+    if (otherTouches) {
+        [self.output releaseHeldButton];
+    } else {
+        [self.output reset];
+    }
+
+    [self.delegate touchesDidChange];
     [self.delegate touchscreenDidDisconnectWithLocationID:locationID];
 }
 
@@ -136,13 +157,13 @@
 
         if (touch.lastUpdated + self.errorResistance < currentFrameID) {
             [touch setPhase:NSTouchPhaseCancelled];
-            [self removeTouch:touch now:NO];
+            [self removeTouchLater:touch];
         }
     }
 
     self.frameIDsByLocationID[@(locationID)] = @(currentFrameID + 1);
 
-    self.output.lastReportTime = (double)clock_gettime_nsec_np(CLOCK_UPTIME_RAW) / 1e9;
+    self.output.lastReportTime = TUCUptimeSeconds();
     [self processFrameForLocationID:locationID];
     [self scheduleLiftCheckForLocationID:locationID];
 }
@@ -158,6 +179,12 @@ static const NSTimeInterval TUCLiftTimeout = 0.35;
 /// Silence this long (a few report intervals) probably means the fingers lifted: a scroll starts coasting then, without
 /// waiting for the lift timeout.
 static const NSTimeInterval TUCQuietTimeout = 0.07;
+
+/// Makes the lift checks already scheduled for this digitizer stale. The counter moves on rather than being removed: a
+/// counter that started again could reach a pending check's number and match it by chance.
+- (void)invalidateLiftChecksForLocationID:(uint32_t)locationID {
+    self.reportGenerationByLocationID[@(locationID)] = @(self.reportGenerationByLocationID[@(locationID)].integerValue + 1);
+}
 
 - (void)scheduleLiftCheckForLocationID:(uint32_t)locationID {
     NSInteger generation = self.reportGenerationByLocationID[@(locationID)].integerValue + 1;
@@ -178,7 +205,7 @@ static const NSTimeInterval TUCQuietTimeout = 0.07;
         for (TUCTouch *touch in [strongSelf activeTouches]) {
             if (touch.locationID != locationID) continue;
             [touch setPhase:NSTouchPhaseEnded];
-            [strongSelf removeTouch:touch now:NO];
+            [strongSelf removeTouchLater:touch];
             lifted = YES;
         }
         if (lifted) {
@@ -209,6 +236,9 @@ static const NSTimeInterval TUCQuietTimeout = 0.07;
     CGFloat pointsPerMM = screen.frame.size.width / physical.width;
 
     TUCContact *contacts = calloc(MAX(touches.count, 1), sizeof(TUCContact));
+    if (contacts == NULL) {
+        return;
+    }
     NSInteger count = 0;
     for (TUCTouch *touch in touches) {
         if (touch.locationID != locationID) continue;
@@ -218,7 +248,7 @@ static const NSTimeInterval TUCQuietTimeout = 0.07;
         count++;
     }
 
-    double now = (double)clock_gettime_nsec_np(CLOCK_UPTIME_RAW) / 1e9;
+    double now = TUCUptimeSeconds();
     self.output.doubleClickTolerancePoints = self.doubleClickTolerance * pointsPerMM;
 
     NSArray<NSValue *> *events = [[self recognizerForLocationID:locationID] handleContacts:contacts
@@ -226,7 +256,7 @@ static const NSTimeInterval TUCQuietTimeout = 0.07;
                                                                                       time:now
                                                                              screenWidthMM:physical.width
                                                                                pointsPerMM:pointsPerMM];
-    if (self.recordFrames) {
+    if (TUCRecordingEnabled()) {
         printf("F %.4f %ld", now, (long)count);
         for (NSInteger i = 0; i < count; i++) {
             printf(" %ld:%.2f,%.2f", (long)contacts[i].identifier, contacts[i].mm.x, contacts[i].mm.y);
@@ -267,7 +297,7 @@ static const NSTimeInterval TUCQuietTimeout = 0.07;
 
     if (!isOnSurface) {
         [touch setPhase: NSTouchPhaseEnded];
-        [self removeTouch:touch now:NO];
+        [self removeTouchLater:touch];
         [self.delegate touchesDidChange];
         return;
 
@@ -292,17 +322,6 @@ static const NSTimeInterval TUCQuietTimeout = 0.07;
 }
 
 
-- (void)updateTouch:(NSInteger)contactID locationID:(uint32_t)locationID withSize:(CGSize)size azimuth:(CGFloat)azimuth {
-    BOOL isNewTouch = NO;
-    TUCTouch *touch = [self obtainTouchWithID:contactID locationID:locationID isNew:&isNewTouch];
-    [touch setLastUpdated:[self currentFrameIDForLocationID:locationID]];
-
-    [touch setSize:size];
-    [touch setAzimuth:azimuth];
-}
-
-
-
 #pragma mark - Touch Set
 
 /**
@@ -318,19 +337,17 @@ static const NSTimeInterval TUCQuietTimeout = 0.07;
 }
 
 
-/**
- Removes a touch from the touch set. As a previous touch might be important for gesture evaluation, it is removed after half a second
- */
-- (void)removeTouch:(TUCTouch *)touch now:(BOOL)instantDeletion{
-    if (instantDeletion) {
-        [[self touchSet] removeObject:touch];
-        [[self delegate] touchesDidChange];
-        return;
-    }
+/// How long an ended touch stays in `touchSet` (it no longer counts as active), so the debug view can show it lifting.
+static const NSTimeInterval TUCEndedTouchLinger = 0.5;
 
+/**
+ Removes an ended or cancelled touch from the touch set after a moment (see TUCEndedTouchLinger). The gestures only see
+ active touches, so this is for the debug view.
+ */
+- (void)removeTouchLater:(TUCTouch *)touch {
     __weak id weakSelf = self;
     NSUUID *uuid = touch.uuid;
-    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, NSEC_PER_SEC / 2), dispatch_get_main_queue(), ^{
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(TUCEndedTouchLinger * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
         for(TUCTouch *touch in [weakSelf touchSet]) {
             if (touch.uuid == uuid && [[weakSelf touchSet] containsObject:touch]) {
                 [[weakSelf touchSet] removeObject:touch];
@@ -343,10 +360,10 @@ static const NSTimeInterval TUCQuietTimeout = 0.07;
 
 
 /**
- Checks the touch set if a touch exists
+ The active touch with this contact ID on this digitizer, if there is one.
  */
-- (TUCTouch *)findTouchWithID:(NSInteger)contactID locationID:(uint32_t)locationID includingPastTouches:(BOOL)includePastTouches {
-    NSSet *set = includePastTouches ? self.touchSet : [self activeTouches];
+- (TUCTouch *)findActiveTouchWithID:(NSInteger)contactID locationID:(uint32_t)locationID {
+    NSSet *set = [self activeTouches];
 
     NSPredicate *predicate = [NSPredicate predicateWithFormat:@"contactID == %d AND locationID == %u", contactID, locationID];
     TUCTouch *touch = [[set filteredSetUsingPredicate:predicate] anyObject];
@@ -357,7 +374,7 @@ static const NSTimeInterval TUCQuietTimeout = 0.07;
  Returns the existing touch object or a new one if this ID does not exist in the set yet.
  */
 - (TUCTouch *)obtainTouchWithID:(NSInteger)contactID locationID:(uint32_t)locationID isNew:(BOOL*)isNew {
-    TUCTouch *touch = [self findTouchWithID:contactID locationID:locationID includingPastTouches:NO];
+    TUCTouch *touch = [self findActiveTouchWithID:contactID locationID:locationID];
     *isNew = NO;
     if(!touch) {
         touch = [[TUCTouch alloc] initWithContactID:contactID locationID:locationID];
@@ -409,12 +426,6 @@ static const NSTimeInterval TUCQuietTimeout = 0.07;
 
 
 
-- (CGPoint)convertScreenPointRelativeToAbsolute:(CGPoint)relativePoint locationID:(uint32_t)locationID {
-    return [[self touchscreenForLocationID:locationID] convertPointRelativeToAbsolute:relativePoint];
-}
-
-
-
 - (CGPoint)clampScreenPointRelativeToAbsolute:(CGPoint)relativePoint locationID:(uint32_t)locationID {
     TUCScreen *screen = [self touchscreenForLocationID:locationID];
     CGPoint clamped = [screen clampRelativePoint:relativePoint toEdgeInset:self.edgeDeadZone];
@@ -436,7 +447,7 @@ static const NSTimeInterval TUCQuietTimeout = 0.07;
     CGSize native = screen.nativePhysicalSize;
     if (native.width > 0 && native.height > 0) return native;
 
-    return CGSizeMake(screen.frame.size.width / 4, screen.frame.size.height / 4);
+    return CGSizeMake(screen.frame.size.width / TUCFallbackPointsPerMM, screen.frame.size.height / TUCFallbackPointsPerMM);
 }
 
 
@@ -461,8 +472,6 @@ static const NSTimeInterval TUCQuietTimeout = 0.07;
         self.recognizersByLocationID = [NSMutableDictionary new];
         self.reportGenerationByLocationID = [NSMutableDictionary new];
         self.output = [TUCGestureOutput new];
-        self.recordFrames = getenv("TOUCHUP_RECORD") != NULL;
-        if (self.recordFrames) setvbuf(stdout, NULL, _IOLBF, 0);
 
         _postMouseEvents = YES;
         self.gestureSettings = [TUCGestureSettings defaultSettings];
@@ -502,11 +511,6 @@ static const NSTimeInterval TUCQuietTimeout = 0.07;
 void TouchInputManagerUpdateTouchPosition(void *self, uint32_t locationID, CFIndex contactID, CGFloat x, CGFloat y, Boolean onSurface, Boolean isValid) {
     CGPoint point = CGPointMake(x, y);
     [(__bridge id)self updateTouch:(NSInteger)contactID locationID:locationID withLocation:point onSurface:onSurface tooLargeForFinger:isValid];
-}
-
-void TouchInputManagerUpdateTouchSize(void *self, uint32_t locationID, CFIndex contactID, CGFloat width, CGFloat height, CGFloat azimuth) {
-    CGSize size = CGSizeMake(width, height);
-    [(__bridge id)self updateTouch:(NSInteger)contactID locationID:locationID withSize:size azimuth:azimuth];
 }
 
 void TouchInputManagerDidProcessReport(void *self, uint32_t locationID) {

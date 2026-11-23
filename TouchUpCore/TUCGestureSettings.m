@@ -19,13 +19,13 @@
         _smartZoom = YES;
         _rotate = YES;
 
-        _swipeBetweenPages = YES;
-        _pagesTrigger = TUCPagesTriggerTwoFingerScroll;
+        _swipeBetweenPages = NO;
+        _pagesTrigger = TUCPagesTriggerThreeFingerSwipe;
         _swipeBetweenFullScreenApps = YES;
-        _fullScreenAppsFingers = 3;
+        _fullScreenAppsFingers = 4;
         _missionControl = YES;
         _appExpose = YES;
-        _missionControlFingers = 3;
+        _missionControlFingers = 4;
         _launchpad = YES;
         _showDesktop = YES;
         _notificationCenter = YES;
@@ -35,6 +35,20 @@
 
 + (instancetype)defaultSettings {
     return [[self alloc] init];
+}
+
+- (BOOL)swipesBetweenPagesWithFingers:(NSInteger)fingers {
+    if (!self.swipeBetweenPages) return NO;
+    switch (self.pagesTrigger) {
+        case TUCPagesTriggerTwoFingerScroll: return fingers == 2;
+        case TUCPagesTriggerThreeFingerSwipe: return fingers == 3;
+        case TUCPagesTriggerTwoOrThreeFingerSwipe: return fingers == 2 || fingers == 3;
+    }
+    return NO;
+}
+
+- (BOOL)usesThreeFingerVerticalSwipes {
+    return (self.missionControl || self.appExpose) && self.missionControlFingers == 3;
 }
 
 - (id)copyWithZone:(NSZone *)zone {

@@ -9,7 +9,7 @@
 
 Most current touchscreens work with Microsoft Windows out-of-the-box as they implement a standardized communication via USB HID. However, nothing happens when connecting these screens to a Mac.
 The goal of Touch Up was to provide a simple, general-purpose driver that enables plug-and-play support for touchscreens on macOS. 
-The code in this repository provides a user-space driver that reads and processes the HID data into a set of touches and different utilities to inject mouse events into the system.
+The code in this repository provides a user-space driver that reads and processes the HID data into a set of touches, recognises gestures in them, and posts them as mouse and native trackpad events.
 
 ## What can you do with this App?
 The Magic Touch Up **utility app** allows you to control your Mac with any connected touch screen. One finger works directly on what it touches; two or more fingers use the same gestures as a Magic Trackpad, posted as native trackpad events:
@@ -45,4 +45,4 @@ We used the following screens for testing:
 ## The *TouchUpCore* Framework
 Game developers, researchers, and others who need access to all touch data can also benefit from this project by integrating the TouchUpCore **framework** themselves. It provides simple access to all touches recognized on the touch surface, simplifying multitouch prototype development in macOS.
 
-The Touch Up app itself is an example of integrating the TouchUpCore framework. You can have a look at the *DebugView* to see how you can visualize the different touch points. Remember that your app needs an Entitlement to access USB if running in the Sandbox.
+The Magic Touch Up app itself is an example of integrating the TouchUpCore framework. You can have a look at the *DebugView* to see how you can visualize the different touch points. Remember that your app needs an Entitlement to access USB if running in the Sandbox.

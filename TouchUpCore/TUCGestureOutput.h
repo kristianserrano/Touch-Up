@@ -41,6 +41,9 @@ NS_ASSUME_NONNULL_BEGIN
 /// Called when posting is switched off or the app quits, so a half-finished gesture or a held button isn't left behind.
 - (void)reset;
 
+/// Lets go of the left mouse button if a drag or press and hold is holding it.
+- (void)releaseHeldButton;
+
 /// Posts a no-op cursor move, which makes macOS show its Accessibility prompt if the permission is missing.
 - (void)nudgeCursor;
 

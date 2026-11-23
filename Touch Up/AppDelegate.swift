@@ -109,14 +109,12 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
 
 class SettingsWindow: NSWindow {
-    
-    var model: TouchUp?
-    
+
     static func window(model: TouchUp) -> SettingsWindow {
         let vc = NSHostingController(rootView: SettingsView(model:model))
         // The SwiftUI toolbar (Reset to Defaults) and title become the window's.
         vc.sceneBridgingOptions = [.toolbars, .title]
-        let window = SettingsWindow(contentRect: NSRect(x: 0, y: 0, width: 960, height: 560),
+        let window = SettingsWindow(contentRect: NSRect(origin: .zero, size: SettingsWindowSize.initial),
                                     styleMask: [.closable, .titled, .fullSizeContentView, .resizable, .miniaturizable],
                                     backing: .buffered,
                                     defer: true,
@@ -124,7 +122,6 @@ class SettingsWindow: NSWindow {
         
         window.title = "Magic Touch Up Settings"
         window.tabbingMode = .disallowed
-        window.model = model
         window.level = .screenSaver
         window.collectionBehavior = [.canJoinAllSpaces, .transient]
         
@@ -135,8 +132,6 @@ class SettingsWindow: NSWindow {
     }
     
     override func close() {
-        self.model?.savePreferences()
-//        self.model?.persistAllDigitizerMappings()
         NSApp.stopModal()
         super.close()
     }

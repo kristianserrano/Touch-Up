@@ -6,7 +6,6 @@
 //
 
 #import <AppKit/AppKit.h>
-#import <TouchUpCore/TUCTouchInputManager-C.h>
 #import <TouchUpCore/TUCTouchDelegate.h>
 #import <TouchUpCore/TUCTouch.h>
 #import <TouchUpCore/TUCGestureSettings.h>
@@ -22,8 +21,8 @@ NS_ASSUME_NONNULL_BEGIN
 @property (strong, atomic) NSMutableSet<TUCTouch *> *touchSet;
 
 /**
- Allows to deactiate that the framework processes touches to post them as mouse events.
- The default value is YES.
+ Whether touches are turned into clicks and gestures at all (mouse, scroll, native gesture and key events).
+ Turning it off lets go of anything held. The default value is YES.
  */
 @property (nonatomic) BOOL postMouseEvents;
 
@@ -81,14 +80,10 @@ NS_ASSUME_NONNULL_BEGIN
 
 /**
  Opt-in exclusive access. When YES, connected touchscreens are seized so macOS and other
- apps no longer receive their events — Touch Up becomes the sole handler. Default is NO.
+ apps no longer receive their events — Magic Touch Up becomes the sole handler. Default is NO.
  Applies immediately to currently-connected devices and  future connections.
  */
 - (void)setTouchscreensSeized:(BOOL)seized;
-
-
-
-- (CGPoint)convertScreenPointRelativeToAbsolute:(CGPoint)relativePoint locationID:(uint32_t)locationID;
 
 
 - (void)triggerSystemAccessibilityAccessAlert;

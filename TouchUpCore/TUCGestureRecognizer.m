@@ -24,7 +24,7 @@ typedef NS_ENUM(NSInteger, TUCMultiMode) {
 };
 
 typedef struct {
-    double cx, cy, spread, t;
+    double cx, cy, spread;
 } TUCCentre;
 
 
@@ -54,6 +54,13 @@ static TUCGestureEvent TUCSwipeEvent(TUCGesturePhase phase, NSInteger fingers, T
     return e;
 }
 
+static TUCGestureEvent TUCEdgeEvent(TUCGesturePhase phase, double travel) {
+    TUCGestureEvent e = TUCEvent(TUCGestureKindEdgeSwipe);
+    e.phase = phase;
+    e.value = travel;
+    return e;
+}
+
 static double TUCWrapAngle(double a) {
     while (a > M_PI) a -= 2 * M_PI;
     while (a <= -M_PI) a += 2 * M_PI;
@@ -64,8 +71,8 @@ static double TUCDegrees(double radians) {
     return radians * 180.0 / M_PI;
 }
 
-static TUCCentre TUCCentreOf(const TUCContact *contacts, NSInteger count, double t) {
-    TUCCentre c = { 0, 0, 0, t };
+static TUCCentre TUCCentreOf(const TUCContact *contacts, NSInteger count) {
+    TUCCentre c = { 0, 0, 0 };
     if (count == 0) return c;
     for (NSInteger i = 0; i < count; i++) { c.cx += contacts[i].mm.x; c.cy += contacts[i].mm.y; }
     c.cx /= count;
@@ -110,7 +117,6 @@ static CGPoint TUCCentroidPoint(const TUCContact *contacts, NSInteger count) {
     TUCTwoMode twoMode;
     BOOL hasPairStart;
     double pairStartDist, pairStartMx, pairStartMy, pairStartAngle;
-    CGPoint pairStartPoint;
     BOOL hasLastPair;
     double lastPairDist, lastPairAngle;
     CGPoint lastMidPoint;
@@ -162,7 +168,8 @@ static NSValue *TUCWrapContact(TUCContact c) {
     TUCGestureSession *_session;
 }
 
-static const NSInteger TUCPinchFingers = 4;     // Launchpad and Show Desktop are four-finger pinches
+static const NSInteger TUCPinchFingers = 4;     // Launchpad and Show Desktop are four-finger pinches; this many or more
+                                                // fingers also measure a stroke from where they landed
 static const NSInteger TUCMaxSwipeFingers = 4;  // more fingers than this do not swipe (five can still pinch)
 
 - (instancetype)init {
@@ -182,16 +189,14 @@ static const NSInteger TUCMaxSwipeFingers = 4;  // more fingers than this do not
         _dragUpgradeSeconds = 0.3;
         _tapLandingSeconds = 0.1;
 
-        _pagesWithTwoFingers = YES;
-        _threeFingerVertical = YES;
+        [self applySettings:[TUCGestureSettings defaultSettings]];
     }
     return self;
 }
 
 - (void)applySettings:(TUCGestureSettings *)s {
-    self.pagesWithTwoFingers = s.swipeBetweenPages
-        && (s.pagesTrigger == TUCPagesTriggerTwoFingerScroll || s.pagesTrigger == TUCPagesTriggerTwoOrThreeFingerSwipe);
-    self.threeFingerVertical = (s.missionControl || s.appExpose) && s.missionControlFingers == 3;
+    self.pagesWithTwoFingers = [s swipesBetweenPagesWithFingers:2];
+    self.threeFingerVertical = [s usesThreeFingerVerticalSwipes];
 }
 
 - (void)reset {
@@ -220,6 +225,10 @@ static const NSInteger TUCMaxSwipeFingers = 4;  // more fingers than this do not
         s->startTime = now;
         s->candidate = rawCount;
         s->candidateSince = now;
+        // Four or more fingers measure from where they landed (see multiFinger), including when they all land in the
+        // first frame.
+        s->candidateHasStart = rawCount >= TUCPinchFingers;
+        if (s->candidateHasStart) s->candidateStart = TUCCentreOf(contacts, rawCount);
         s->tapPoint = contacts[0].point;
         _session = s;
         [events addObject:TUCWrapEvent(TUCEventAt(TUCGestureKindTouchBegan, contacts[0].point))];
@@ -325,7 +334,7 @@ static const NSInteger TUCMaxSwipeFingers = 4;  // more fingers than this do not
         s->candidate = rawCount;
         s->candidateSince = now;
         s->candidateHasStart = rawCount >= TUCPinchFingers;
-        if (s->candidateHasStart) s->candidateStart = TUCCentreOf(contacts, rawCount, now);
+        if (s->candidateHasStart) s->candidateStart = TUCCentreOf(contacts, rawCount);
         s->candidateFrames = 0;
     }
     s->candidateFrames++;
@@ -393,7 +402,6 @@ static const NSInteger TUCMaxSwipeFingers = 4;  // more fingers than this do not
         s->pairStartMx = mx;
         s->pairStartMy = my;
         s->pairStartAngle = angle;
-        s->pairStartPoint = mid;
     }
 
     double prevDist = s->hasLastPair ? s->lastPairDist : dist;
@@ -422,13 +430,8 @@ static const NSInteger TUCMaxSwipeFingers = 4;  // more fingers than this do not
                 && spread < translation && arc < translation) {
                 s->twoMode = TUCTwoModeEdge;
                 s->edgeTravel = -tx;
-                TUCGestureEvent began = TUCEvent(TUCGestureKindEdgeSwipe);
-                began.phase = TUCGesturePhaseBegan;
-                TUCGestureEvent changed = TUCEvent(TUCGestureKindEdgeSwipe);
-                changed.phase = TUCGesturePhaseChanged;
-                changed.value = s->edgeTravel;
-                [events addObject:TUCWrapEvent(began)];
-                [events addObject:TUCWrapEvent(changed)];
+                [events addObject:TUCWrapEvent(TUCEdgeEvent(TUCGesturePhaseBegan, 0))];
+                [events addObject:TUCWrapEvent(TUCEdgeEvent(TUCGesturePhaseChanged, s->edgeTravel))];
                 return;
             }
 
@@ -472,10 +475,7 @@ static const NSInteger TUCMaxSwipeFingers = 4;  // more fingers than this do not
 
         case TUCTwoModeEdge: {
             s->edgeTravel = -(mx - s->pairStartMx);
-            TUCGestureEvent e = TUCEvent(TUCGestureKindEdgeSwipe);
-            e.phase = TUCGesturePhaseChanged;
-            e.value = s->edgeTravel;
-            [events addObject:TUCWrapEvent(e)];
+            [events addObject:TUCWrapEvent(TUCEdgeEvent(TUCGesturePhaseChanged, s->edgeTravel))];
             return;
         }
 
@@ -531,13 +531,9 @@ static const NSInteger TUCMaxSwipeFingers = 4;  // more fingers than this do not
         case TUCTwoModePage:
             [events addObject:TUCWrapEvent(TUCSwipeEvent(TUCGesturePhaseEnded, 2, TUCSwipeAxisHorizontal, s->pageTravel, s->lastMidPoint))];
             break;
-        case TUCTwoModeEdge: {
-            TUCGestureEvent e = TUCEvent(TUCGestureKindEdgeSwipe);
-            e.phase = TUCGesturePhaseEnded;
-            e.value = s->edgeTravel;
-            [events addObject:TUCWrapEvent(e)];
+        case TUCTwoModeEdge:
+            [events addObject:TUCWrapEvent(TUCEdgeEvent(TUCGesturePhaseEnded, s->edgeTravel))];
             break;
-        }
         case TUCTwoModeUndecided:
             break;
     }
@@ -551,7 +547,7 @@ static const NSInteger TUCMaxSwipeFingers = 4;  // more fingers than this do not
 // spread changed more than the centroid moved (four fingers): a pinch; otherwise horizontal or vertical by the
 // dominant axis.
 - (void)multiFinger:(TUCGestureSession *)s contacts:(const TUCContact *)contacts count:(NSInteger)count now:(double)now events:(NSMutableArray<NSValue *> *)events {
-    TUCCentre c = TUCCentreOf(contacts, count, now);
+    TUCCentre c = TUCCentreOf(contacts, count);
     CGPoint centroid = TUCCentroidPoint(contacts, count);
 
     if (!s->hasMultiStart) {

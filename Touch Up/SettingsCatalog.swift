@@ -6,7 +6,7 @@
 //  animation looks. A port of the T650Native project's catalog (src/T650Native/Settings/SettingsCatalog.cs and
 //  native/SettingsApp/Sources/T650Settings/SettingsCatalog.swift), with the same labels and texts where the gesture is the
 //  same, and touchscreen wording where it differs. The pad-only settings (pointer speed, tap to click, corner clicks, the
-//  three-finger drag) are replaced by Touch Up's own: a touchscreen clicks and drags right under the finger.
+//  three-finger drag) are replaced by Magic Touch Up's own: a touchscreen clicks and drags right under the finger.
 //
 
 import Foundation
@@ -20,7 +20,7 @@ struct Option: Identifiable, Hashable {
 }
 
 enum Control: Identifiable {
-    /// A measurement with a unit (Touch Up's own: millimetres and seconds).
+    /// A measurement with a unit (Magic Touch Up's own parameters: millimetres and seconds).
     case measure(name: String, label: String, range: ClosedRange<Double>, step: Double, format: String)
     /// An extra on/off inside a group (the group's own switch is `SettingGroup.toggle`).
     case toggle(name: String, label: String, text: String?)
@@ -42,7 +42,6 @@ struct GlyphSpec {
     var motion: Glyph.Motion
     /// What the screen in the picture shows the gesture doing.
     var scene: Glyph.Scene = .desktop
-    var corner: Glyph.Corner? = nil
     var alt: Int? = nil
     var altReverse = false
     /// The setting that decides the finger count (a SwipeFingerCount), the scroll direction, or which of `cases`.
@@ -56,10 +55,9 @@ struct GlyphSpec {
             return chosen.resolve(in: settings)
         }
         return Glyph(
-            fingers: fingersFrom.map { settings($0)?.string == "Three" ? 3 : 4 } ?? fingers,
+            fingers: fingersFrom.flatMap { SwipeFingerCount(rawValue: settings($0)?.string ?? "")?.count } ?? fingers,
             motion: motion,
             scene: scene,
-            corner: corner,
             alt: alt,
             altReverse: altReverse,
             scrollBar: scrollBarFrom.flatMap { Glyph.ScrollBar(rawValue: settings($0)?.string?.lowercased() ?? "") })
@@ -72,17 +70,12 @@ struct SettingGroup: Identifiable {
     let symbol: String
     /// The on/off setting the group is about; nil for a group that has no switch of its own.
     var toggle: String? = nil
-    var toggleLabel: String? = nil
     let text: String
     var note: String? = nil
     /// What the first choice of a gesture with a method says.
     var offLabel = SettingsCatalog.offLabel
     var controls: [Control] = []
     var glyph: GlyphSpec? = nil
-    /// The picture while the gesture is off; nil is the empty pad.
-    var offGlyph: GlyphSpec? = nil
-
-    var switchLabel: String { toggleLabel ?? title }
 
     /// Every setting the group shows.
     var settingNames: [String] { (toggle.map { [$0] } ?? []) + controls.map(\.settingName) }
@@ -98,7 +91,7 @@ struct SettingsPane: Identifiable, Hashable {
     let id: String
     let title: String
     let symbol: String
-    /// Empty for a pane drawn by its own view (Touchscreens).
+    /// The cards; none for the Touchscreens pane, which draws its own view.
     var groups: [SettingGroup] = []
 
     static func == (a: SettingsPane, b: SettingsPane) -> Bool { a.id == b.id }
@@ -117,7 +110,7 @@ enum SettingsCatalog {
             SettingGroup(id: "click", title: "Click", symbol: "hand.tap",
                          text: "Tap with one finger to click right where you touch. Tap twice to double-click.",
                          note: "Two taps this close together count as a double-click.",
-                         controls: [.measure(name: "DoubleClickDistance", label: "Double-click zone", range: 0...8, step: 1, format: "%.0f mm")],
+                         controls: [.measure(name: ParameterName.doubleClickDistance, label: "Double-click zone", range: 0...8, step: 1, format: "%.0f mm")],
                          glyph: GlyphSpec(fingers: 1, motion: .tap, scene: .click)),
             SettingGroup(id: "secondary", title: "Secondary click", symbol: "contextualmenu.and.cursorarrow", toggle: "SecondaryClick",
                          text: "Just like on the right click of a mouse, the secondary click lets you open the contextual menu and access shortcuts. Tap with two fingers.",
@@ -131,8 +124,8 @@ enum SettingsCatalog {
                          text: "Touch an item and move your finger to drag it to a new location. Rest your finger on it to press and hold, for menus that open on a long press.",
                          note: "Lifting before the finger has moved past the threshold is a click. Increase it if taps turn into small drags.",
                          controls: [
-                            .measure(name: "DragThreshold", label: "Drag threshold", range: 1...8, step: 0.5, format: "%.1f mm"),
-                            .measure(name: "LongPressDuration", label: "Press and hold delay", range: 0.2...1.5, step: 0.1, format: "%.1f s"),
+                            .measure(name: ParameterName.dragThreshold, label: "Drag threshold", range: 1...8, step: 0.5, format: "%.1f mm"),
+                            .measure(name: ParameterName.longPressDuration, label: "Press and hold delay", range: 0.2...1.5, step: 0.1, format: "%.1f s"),
                          ],
                          glyph: GlyphSpec(fingers: 1, motion: .hold, scene: .drag)),
         ]),
@@ -247,10 +240,10 @@ enum SettingsCatalog {
         }.joined(separator: ", ")
     }
 
-    /// The group's picture as the settings say it is now. A gesture that is off shows its off picture, or the empty pad.
+    /// The group's picture as the settings say it is now. A gesture that is off shows the idle desktop.
     static func glyph(for group: SettingGroup, in settings: (String) -> SettingValue?) -> Glyph? {
         if let toggle = group.toggle, settings(toggle)?.bool != true {
-            return group.offGlyph?.resolve(in: settings) ?? Glyph.off
+            return Glyph.off
         }
         return group.glyph?.resolve(in: settings)
     }

@@ -4,7 +4,7 @@
 //
 //  The settings window: a port of the T650Native project's native settings window
 //  (native/SettingsApp/Sources/T650Settings/SettingsViews.swift). A sidebar of panes; in each, the settings as cards with a
-//  summary of how they are set, and the selected one in full beside them with its animation. Touch Up's own touchscreen
+//  summary of how they are set, and the selected one in full beside them with its animation. Magic Touch Up's own touchscreen
 //  settings have a pane of their own.
 //
 
@@ -56,7 +56,7 @@ struct SettingsView: View {
         .sheet(item: Binding(get: { model.confirmation }, set: { if $0 == nil { model.cancelSettingsChange() } })) { confirmation in
             ConfirmationSheet(model: model, confirmation: confirmation)
         }
-        .frame(minWidth: 900, minHeight: 480)
+        .frame(minWidth: SettingsWindowSize.minimum.width, minHeight: SettingsWindowSize.minimum.height)
     }
 
     /// The first pane until another is chosen; Touchscreens first while the app cannot post events yet.
@@ -72,7 +72,7 @@ struct SettingsView: View {
     private var detail: some View {
         if let pane = shownPane.wrappedValue {
             Group {
-                if pane.groups.isEmpty {
+                if pane.id == SettingsCatalog.touchscreensPaneID {
                     TouchscreensPane(model: model)
                 } else {
                     PaneView(model: model, pane: pane)
@@ -82,6 +82,12 @@ struct SettingsView: View {
             .navigationTitle(pane.title)
         }
     }
+}
+
+/// The settings window's size when it first opens, and the smallest it can be made.
+enum SettingsWindowSize {
+    static let initial = CGSize(width: 960, height: 560)
+    static let minimum = CGSize(width: 900, height: 480)
 }
 
 // The sizes the views share.
@@ -99,7 +105,8 @@ private enum Layout {
 }
 
 /// A pane: the settings as cards on the left, each with a summary of how it is set, and on the right the selected one in
-/// full (its name and explanation, its switch or choice, its other controls and note) with its animation beneath.
+/// full (its name and explanation, its switch or choice, its other controls and note) with its animation beneath. Only
+/// for a catalog pane, which has at least one card.
 struct PaneView: View {
     @ObservedObject var model: TouchUp
     let pane: SettingsPane
@@ -232,11 +239,11 @@ struct GroupSection: View {
                         Text(option.label).tag(Optional(option.value))
                     }
                 } label: {
-                    GroupHeading(title: group.switchLabel, group: group)
+                    GroupHeading(title: group.title, group: group)
                 }
             } else {
                 if let toggle = group.toggle {
-                    Toggle(isOn: boolBinding(toggle)) { GroupHeading(title: group.switchLabel, group: group) }
+                    Toggle(isOn: boolBinding(toggle)) { GroupHeading(title: group.title, group: group) }
                 } else {
                     GroupHeading(title: group.title, group: group)
                 }
@@ -366,15 +373,6 @@ struct AboutFooter: View {
     }
 }
 
-
-struct SettingsExplanationLabel: View {
-    let labels: (title: String, description: String)
-
-    var body: some View {
-        Text(labels.title)
-        Text(labels.description)
-    }
-}
 
 
 #Preview {

@@ -5,27 +5,13 @@
 
 #import "TUCGestureOutput.h"
 #import <ApplicationServices/ApplicationServices.h>
-#import <time.h>
 
 static const uint16_t TUCKeyD = 0x02;   // Control-Command-D: Look Up
 static const uint16_t TUCKeyN = 0x2D;   // Fn-N: Notification Center, when the menu-bar clock cannot be pressed
-static const CGEventFlags TUCFlagSecondaryFn = 0x00800000;
 
 static const double TUCMomentumTick = 1.0 / 120.0;
 static const double TUCMinMomentumStep = 0.001;
 static const double TUCMaxMomentumStep = 0.1;
-
-static double TUCNow(void) {
-    return (double)clock_gettime_nsec_np(CLOCK_UPTIME_RAW) / 1e9;
-}
-
-/// TOUCHUP_RECORD=1 also prints what the output does with scrolling (see TUCTouchInputManager's recorder).
-static BOOL TUCRecording(void) {
-    static BOOL recording;
-    static dispatch_once_t once;
-    dispatch_once(&once, ^{ recording = getenv("TOUCHUP_RECORD") != NULL; });
-    return recording;
-}
 
 /// The modifier keys physically held right now, so a command-tap or shift-drag is the click it would be with a mouse.
 /// Only the four that change what a click means.
@@ -155,11 +141,7 @@ static CGEventFlags TUCHeldClickModifiers(void) {
             if (e.phase == TUCGesturePhaseBegan && e.fingers == 2) {
                 [self moveCursorTo:e.point];  // a page swipe acts on the window under the fingers
             }
-            for (NSValue *v in [self.swipes translatePhase:e.phase fingers:e.fingers axis:e.axis travel:e.value now:TUCNow()]) {
-                TUCNativeSwipeEvent n;
-                [v getValue:&n size:sizeof(n)];
-                [self postSwipe:n];
-            }
+            [self postSwipes:[self.swipes translatePhase:e.phase fingers:e.fingers axis:e.axis travel:e.value now:TUCUptimeSeconds()]];
             break;
 
         case TUCGestureKindEdgeSwipe:
@@ -177,14 +159,14 @@ static CGEventFlags TUCHeldClickModifiers(void) {
 
     [self cancelMomentum];
     [self endScrollAllowingMomentum:NO];
-    if (_buttonDown) [self releaseAt:[self cursorLocation]];
+    [self releaseHeldButton];
     [self endGesture:TUCSubtypeMagnify active:&_magnifying];
     [self endGesture:TUCSubtypeRotate active:&_rotating];
-    for (NSValue *v in [self.swipes cancel]) {
-        TUCNativeSwipeEvent n;
-        [v getValue:&n size:sizeof(n)];
-        [self postSwipe:n];
-    }
+    [self postSwipes:[self.swipes cancel]];
+}
+
+- (void)releaseHeldButton {
+    if (_buttonDown) [self releaseAt:[self cursorLocation]];
 }
 
 - (void)nudgeCursor {
@@ -219,7 +201,7 @@ static CGEventFlags TUCHeldClickModifiers(void) {
 - (void)clickAt:(CGPoint)p {
     self.clicks.radiusPoints = self.doubleClickTolerancePoints;
     self.clicks.intervalSeconds = [NSEvent doubleClickInterval];
-    int64_t state = [self.clicks pressAt:p now:TUCNow()];
+    int64_t state = [self.clicks pressAt:p now:TUCUptimeSeconds()];
 
     [self moveCursorTo:p];
     [self postMouse:kCGEventLeftMouseDown at:p button:kCGMouseButtonLeft clickState:state];
@@ -228,7 +210,7 @@ static CGEventFlags TUCHeldClickModifiers(void) {
 
 - (void)pressAt:(CGPoint)p {
     if (_buttonDown) return;  // a second press would take the first over and stick
-    _clickState = [self.clicks pressForDragAt:p now:TUCNow()];
+    _clickState = [self.clicks pressForDragAt:p now:TUCUptimeSeconds()];
     _buttonDown = YES;
     _buttonPoint = p;
     [self moveCursorTo:p];
@@ -293,12 +275,12 @@ static CGEventFlags TUCHeldClickModifiers(void) {
 #pragma mark - Scrolling
 
 - (void)postScrollWheel1:(int32_t)wheel1 wheel2:(int32_t)wheel2 scrollPhase:(int64_t)scrollPhase momentumPhase:(int64_t)momentumPhase {
-    if (TUCRecording()) printf("O %.4f wheel %d %d phase %lld momentum %lld\n", TUCNow(), wheel1, wheel2, scrollPhase, momentumPhase);
+    if (TUCRecordingEnabled()) printf("O %.4f wheel %d %d phase %lld momentum %lld\n", TUCUptimeSeconds(), wheel1, wheel2, scrollPhase, momentumPhase);
     CGEventRef event = CGEventCreateScrollWheelEvent2(NULL, kCGScrollEventUnitPixel, 2, wheel1, wheel2, 0);
     if (!event) return;
     CGEventSetFlags(event, 0);
-    if (scrollPhase != 0) CGEventSetIntegerValueField(event, TUCFieldScrollPhase, scrollPhase);
-    if (momentumPhase != 0) CGEventSetIntegerValueField(event, TUCFieldMomentumPhase, momentumPhase);
+    if (scrollPhase != 0) CGEventSetIntegerValueField(event, kCGScrollWheelEventScrollPhase, scrollPhase);
+    if (momentumPhase != 0) CGEventSetIntegerValueField(event, kCGScrollWheelEventMomentumPhase, momentumPhase);
     CGEventPost(kCGHIDEventTap, event);
     CFRelease(event);
 }
@@ -306,7 +288,7 @@ static CGEventFlags TUCHeldClickModifiers(void) {
 /// Finger movement (points) -> whole wheel pixels, carrying the fraction. Natural: the content follows the fingers.
 /// The acceleration for how fast it is going (points per second) applies to the fingers and the coasting alike.
 - (void)wheelsFor:(CGVector)d speed:(double)pointsPerSecond wheel1:(int32_t *)wheel1 wheel2:(int32_t *)wheel2 {
-    double ppmm = self.momentum.pointsPerMM > 0 ? self.momentum.pointsPerMM : 4;
+    double ppmm = self.momentum.pointsPerMM > 0 ? self.momentum.pointsPerMM : TUCFallbackPointsPerMM;
     double gain = TUCScrollBoost(pointsPerSecond / ppmm);
     double sign = (self.settings.naturalScrolling ? 1.0 : -1.0) * gain;
     _carryX += d.dx * sign;
@@ -322,7 +304,7 @@ static CGEventFlags TUCHeldClickModifiers(void) {
         [self moveCursorTo:p];  // the scroll goes to the view under the fingers
     }
     if (pointsPerMM > 0) self.momentum.pointsPerMM = pointsPerMM;
-    double now = TUCNow();
+    double now = TUCUptimeSeconds();
     [self.velocity addDx:d.dx dy:d.dy now:now];
     CGVector v = [self.velocity velocityAt:now];
 
@@ -330,13 +312,13 @@ static CGEventFlags TUCHeldClickModifiers(void) {
     [self wheelsFor:d speed:hypot(v.dx, v.dy) wheel1:&wheel1 wheel2:&wheel2];
     if (wheel1 != 0 || wheel2 != 0) {
         // The fingers' scroll is a phased gesture, like a trackpad's: began, then changed, then ended.
-        [self postScrollWheel1:wheel1 wheel2:wheel2 scrollPhase:_fingerScrollBegan ? TUCPhaseChanged : TUCPhaseBegan momentumPhase:0];
+        [self postScrollWheel1:wheel1 wheel2:wheel2 scrollPhase:_fingerScrollBegan ? kCGScrollPhaseChanged : kCGScrollPhaseBegan momentumPhase:0];
         _fingerScrollBegan = YES;
     }
 }
 
 - (void)fingersWentQuiet {
-    if (TUCRecording()) printf("O %.4f quiet scrolling=%d\n", TUCNow(), _fingerScrollBegan);
+    if (TUCRecordingEnabled()) printf("O %.4f quiet scrolling=%d\n", TUCUptimeSeconds(), _fingerScrollBegan);
     if (_fingerScrollBegan) {
         [self endScrollAllowingMomentum:YES];
     }
@@ -349,21 +331,21 @@ static CGEventFlags TUCHeldClickModifiers(void) {
     }
 
     if (_fingerScrollBegan) {
-        [self postScrollWheel1:0 wheel2:0 scrollPhase:TUCPhaseEnded momentumPhase:0];
+        [self postScrollWheel1:0 wheel2:0 scrollPhase:kCGScrollPhaseEnded momentumPhase:0];
         _fingerScrollBegan = NO;
     }
 
     // As of the last report: a lift noticed late (no report, then a timeout) must not read as fingers that had stopped.
-    double now = TUCNow();
+    double now = TUCUptimeSeconds();
     double measuredAt = self.lastReportTime > 0 ? fmin(now, self.lastReportTime) : now;
     CGVector v = [self.velocity velocityAt:measuredAt];
     [self.velocity reset];
 
     BOOL coasting = allowMomentum && self.settings.scrollMomentum && [self.momentum startWithVelocity:v];
-    if (TUCRecording()) printf("O %.4f end-scroll v=%.0f,%.0f pt/s measured %.0f ms before now, coast=%d\n", now, v.dx, v.dy, (now - measuredAt) * 1000, coasting);
+    if (TUCRecordingEnabled()) printf("O %.4f end-scroll v=%.0f,%.0f pt/s measured %.0f ms before now, coast=%d\n", now, v.dx, v.dy, (now - measuredAt) * 1000, coasting);
     if (coasting) {
         _momentumBegun = NO;
-        _lastMomentumTick = TUCNow();
+        _lastMomentumTick = TUCUptimeSeconds();
         [self.momentumTimer invalidate];
         self.momentumTimer = [NSTimer timerWithTimeInterval:TUCMomentumTick target:self selector:@selector(momentumTick:) userInfo:nil repeats:YES];
         [[NSRunLoop mainRunLoop] addTimer:self.momentumTimer forMode:NSRunLoopCommonModes];
@@ -379,7 +361,7 @@ static CGEventFlags TUCHeldClickModifiers(void) {
         return;
     }
 
-    double now = TUCNow();
+    double now = TUCUptimeSeconds();
     double dt = fmax(TUCMinMomentumStep, fmin(TUCMaxMomentumStep, now - _lastMomentumTick));
     _lastMomentumTick = now;
 
@@ -388,7 +370,7 @@ static CGEventFlags TUCHeldClickModifiers(void) {
     int32_t wheel1, wheel2;
     [self wheelsFor:d speed:hypot(d.dx, d.dy) / dt wheel1:&wheel1 wheel2:&wheel2];
     if (wheel1 != 0 || wheel2 != 0) {
-        [self postScrollWheel1:wheel1 wheel2:wheel2 scrollPhase:0 momentumPhase:_momentumBegun ? 2 : 1];
+        [self postScrollWheel1:wheel1 wheel2:wheel2 scrollPhase:0 momentumPhase:_momentumBegun ? kCGMomentumScrollPhaseContinue : kCGMomentumScrollPhaseBegin];
         _momentumBegun = YES;
     }
 
@@ -400,7 +382,7 @@ static CGEventFlags TUCHeldClickModifiers(void) {
     [self.momentumTimer invalidate];
     self.momentumTimer = nil;
     if (_momentumBegun) {
-        [self postScrollWheel1:0 wheel2:0 scrollPhase:0 momentumPhase:3];
+        [self postScrollWheel1:0 wheel2:0 scrollPhase:0 momentumPhase:kCGMomentumScrollPhaseEnd];
     }
     _momentumBegun = NO;
     _carryX = 0;
@@ -408,7 +390,7 @@ static CGEventFlags TUCHeldClickModifiers(void) {
 }
 
 - (void)cancelMomentum {
-    if (TUCRecording() && (self.momentum.active || self.momentumTimer != nil)) printf("O %.4f cancel-momentum\n", TUCNow());
+    if (TUCRecordingEnabled() && (self.momentum.active || self.momentumTimer != nil)) printf("O %.4f cancel-momentum\n", TUCUptimeSeconds());
     if (!self.momentum.active && self.momentumTimer == nil) return;
     [self.momentum cancel];
     [self finishMomentum];
@@ -484,6 +466,14 @@ static CGEventFlags TUCHeldClickModifiers(void) {
     *active = NO;
 }
 
+- (void)postSwipes:(NSArray<NSValue *> *)swipes {
+    for (NSValue *v in swipes) {
+        TUCNativeSwipeEvent n;
+        [v getValue:&n size:sizeof(n)];
+        [self postSwipe:n];
+    }
+}
+
 /// Native swipe layout (Dock swipe type 30 / navigation swipe type 29); see TUCSwipeTranslator.
 - (void)postSwipe:(TUCNativeSwipeEvent)n {
     float progressFloat = (float)n.progress;
@@ -546,7 +536,7 @@ static CGEventFlags TUCHeldClickModifiers(void) {
 /// Presses the menu-bar clock, which opens (or closes) Notification Center; falls back to Fn-N.
 - (void)toggleNotificationCenter {
     if ([self pressMenuBarClock]) return;
-    [self postKey:TUCKeyN flags:TUCFlagSecondaryFn];
+    [self postKey:TUCKeyN flags:kCGEventFlagMaskSecondaryFn];
 }
 
 - (BOOL)pressMenuBarClock {

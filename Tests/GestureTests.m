@@ -2,7 +2,8 @@
 //  GestureTests.m
 //  Touch Up Core tests
 //
-//  Tests for the pure gesture logic (TUCGestureRecognizer, TUCSwipeTranslator, TUCDockSwipeBlock, momentum).
+//  Tests for the pure gesture logic: TUCGestureRecognizer, TUCSwipeTranslator, TUCDockSwipeBlock, TUCClickCounter, scroll
+//  velocity, momentum and boost, and TUCGestureSettings' defaults and routing.
 //  Run with Tests/run-tests.sh. No XCTest target: these files have no OS dependencies, so plain clang is enough.
 //
 
@@ -240,6 +241,7 @@ static void testTwoFingerRotate(void) {
 static void testTwoFingerSidewaysIsAPageSwipeWhenOn(void) {
     currentTest = @"two finger page swipe";
     Driver *d = [Driver new];
+    d.recognizer.pagesWithTwoFingers = YES;  // swipe between pages on the two-finger scroll (off by default)
     NSArray *pair = @[@[@1, @100, @60], @[@2, @100, @80]];
     [d hold:pair frames:5];
     [d move:pair dx:-40 dy:2 frames:15];
@@ -366,17 +368,45 @@ static TUCNativeSwipeEvent Native(NSValue *v) {
     return e;
 }
 
+/// Settings with the swipes on the given finger counts, and pages on the given trigger.
+static TUCGestureSettings *Swipes(NSInteger desktopsFingers, NSInteger missionControlFingers, BOOL pages, TUCPagesTrigger trigger) {
+    TUCGestureSettings *s = [TUCGestureSettings defaultSettings];
+    s.fullScreenAppsFingers = desktopsFingers;
+    s.missionControlFingers = missionControlFingers;
+    s.swipeBetweenPages = pages;
+    s.pagesTrigger = trigger;
+    return s;
+}
+
+static void testDefaultsAndRouting(void) {
+    currentTest = @"framework defaults are the app's";
+    TUCGestureSettings *d = [TUCGestureSettings defaultSettings];
+    CHECK(!d.swipeBetweenPages && d.pagesTrigger == TUCPagesTriggerThreeFingerSwipe, @"pages off, three-finger trigger");
+    CHECK(d.fullScreenAppsFingers == 4 && d.missionControlFingers == 4, @"full-screen apps and Mission Control on four fingers");
+    CHECK(!d.lookUp && d.secondaryClick && d.zoom && d.smartZoom && d.rotate && d.notificationCenter, @"switches");
+
+    currentTest = @"pages routing";
+    CHECK(![d swipesBetweenPagesWithFingers:2] && ![d swipesBetweenPagesWithFingers:3], @"pages off: no finger count");
+    TUCGestureSettings *two = Swipes(4, 4, YES, TUCPagesTriggerTwoFingerScroll);
+    TUCGestureSettings *both = Swipes(4, 4, YES, TUCPagesTriggerTwoOrThreeFingerSwipe);
+    TUCGestureSettings *three = Swipes(4, 4, YES, TUCPagesTriggerThreeFingerSwipe);
+    CHECK([two swipesBetweenPagesWithFingers:2] && ![two swipesBetweenPagesWithFingers:3], @"two-finger scroll");
+    CHECK([both swipesBetweenPagesWithFingers:2] && [both swipesBetweenPagesWithFingers:3], @"two or three");
+    CHECK(![three swipesBetweenPagesWithFingers:2] && [three swipesBetweenPagesWithFingers:3], @"three-finger swipe");
+    CHECK(![d usesThreeFingerVerticalSwipes] && [Swipes(4, 3, NO, TUCPagesTriggerThreeFingerSwipe) usesThreeFingerVerticalSwipes], @"three-finger vertical only on three");
+}
+
 static void testTranslatorCommitsALongSwipeUpAsMissionControl(void) {
     currentTest = @"translator mission control";
-    TUCSwipeTranslator *t = [TUCSwipeTranslator new];
+    TUCSwipeTranslator *t = [TUCSwipeTranslator new];  // defaults: Mission Control on four fingers
     double now = 0;
     NSMutableArray<NSValue *> *out = [NSMutableArray new];
-    [out addObjectsFromArray:Translate(t, TUCGesturePhaseBegan, 3, TUCSwipeAxisVertical, 0, now)];
+    [out addObjectsFromArray:Translate(t, TUCGesturePhaseBegan, 4, TUCSwipeAxisVertical, 0, now)];
     for (int i = 1; i <= 20; i++) {
         now += 0.01;
-        [out addObjectsFromArray:Translate(t, TUCGesturePhaseChanged, 3, TUCSwipeAxisVertical, -2.0 * i, now)];
+        [out addObjectsFromArray:Translate(t, TUCGesturePhaseChanged, 4, TUCSwipeAxisVertical, -2.0 * i, now)];
     }
-    [out addObjectsFromArray:Translate(t, TUCGesturePhaseEnded, 3, TUCSwipeAxisVertical, -40, now + 0.01)];
+    [out addObjectsFromArray:Translate(t, TUCGesturePhaseEnded, 4, TUCSwipeAxisVertical, -40, now + 0.01)];
 
     TUCNativeSwipeEvent began = Native(out.firstObject);
     TUCNativeSwipeEvent end = Native(out.lastObject);
@@ -387,18 +417,20 @@ static void testTranslatorCommitsALongSwipeUpAsMissionControl(void) {
 
 static void testTranslatorCancelsAShortSlowSwipe(void) {
     currentTest = @"translator cancel";
-    TUCSwipeTranslator *t = [TUCSwipeTranslator new];
-    Translate(t, TUCGesturePhaseBegan, 3, TUCSwipeAxisHorizontal, 0, 0);
-    Translate(t, TUCGesturePhaseChanged, 3, TUCSwipeAxisHorizontal, -3, 0.1);
-    NSArray *end = Translate(t, TUCGesturePhaseEnded, 3, TUCSwipeAxisHorizontal, -3, 0.5);
+    TUCSwipeTranslator *t = [TUCSwipeTranslator new];  // defaults: full-screen apps on four fingers
+    Translate(t, TUCGesturePhaseBegan, 4, TUCSwipeAxisHorizontal, 0, 0);
+    Translate(t, TUCGesturePhaseChanged, 4, TUCSwipeAxisHorizontal, -3, 0.1);
+    NSArray *end = Translate(t, TUCGesturePhaseEnded, 4, TUCSwipeAxisHorizontal, -3, 0.5);
     CHECK(Native(end.lastObject).phase == TUCPhaseCancelled, @"a 3 mm swipe is cancelled");
 }
 
 static void testTranslatorRoutesBySettings(void) {
     currentTest = @"translator routing";
     TUCSwipeTranslator *t = [TUCSwipeTranslator new];
+    t.settings = Swipes(3, 3, YES, TUCPagesTriggerTwoFingerScroll);
 
-    // Defaults: two-finger sideways = page swipe (navigation, type 29), three-finger sideways = full-screen apps (Dock, type 30).
+    // Pages on two fingers: two-finger sideways = page swipe (navigation, type 29); full-screen apps on three fingers:
+    // three-finger sideways = Dock swipe (type 30).
     Translate(t, TUCGesturePhaseBegan, 2, TUCSwipeAxisHorizontal, 0, 0);
     NSArray *pages = Translate(t, TUCGesturePhaseChanged, 2, TUCSwipeAxisHorizontal, 20, 0.05);
     CHECK(pages.count > 0 && Native(pages.firstObject).cgType == TUCEventTypeGesture && Native(pages.firstObject).subtype == TUCSubtypeNavigationSwipe, @"two-finger -> navigation swipe");
@@ -410,7 +442,7 @@ static void testTranslatorRoutesBySettings(void) {
     Translate(t, TUCGesturePhaseEnded, 3, TUCSwipeAxisHorizontal, 20, 1.1);
 
     // Switched off: nothing is posted for the whole swipe.
-    TUCGestureSettings *s = [TUCGestureSettings defaultSettings];
+    TUCGestureSettings *s = Swipes(3, 3, YES, TUCPagesTriggerTwoFingerScroll);
     s.missionControl = NO;
     t.settings = s;
     Translate(t, TUCGesturePhaseBegan, 3, TUCSwipeAxisVertical, 0, 2);
@@ -422,6 +454,12 @@ static void testTranslatorRoutesBySettings(void) {
     Translate(t, TUCGesturePhaseBegan, 4, TUCSwipeAxisPinch, 0, 3);
     NSArray *pinch = Translate(t, TUCGesturePhaseChanged, 4, TUCSwipeAxisPinch, -10, 3.05);
     CHECK(pinch.count == 2 && Native(pinch[0]).progress > 0 && Native(pinch[1]).flavor == TUCFlavorPinchIn, @"pinch in -> Launchpad direction");
+    Translate(t, TUCGesturePhaseEnded, 4, TUCSwipeAxisPinch, -10, 3.1);
+
+    // The defaults: a three-finger sideways swipe does nothing (pages off, full-screen apps on four).
+    t.settings = [TUCGestureSettings defaultSettings];
+    Translate(t, TUCGesturePhaseBegan, 3, TUCSwipeAxisHorizontal, 0, 4);
+    CHECK(Translate(t, TUCGesturePhaseChanged, 3, TUCSwipeAxisHorizontal, 20, 4.05).count == 0, @"defaults: three-finger sideways is off");
 }
 
 
@@ -535,7 +573,7 @@ static void testClickCounter(void) {
 
 #pragma mark - Replays of real strokes
 
-/// One stroke from a recording (Touch Up run with TOUCHUP_RECORD=1): the frames from first contact to all lifted.
+/// One stroke from a recording (Magic Touch Up run with TOUCHUP_RECORD=1): the frames from first contact to all lifted.
 typedef struct {
     NSInteger swipesBegan;      // how many swipes the recognizer began with the stroke's final finger count
     NSInteger fingers;          // of the last swipe
@@ -563,34 +601,42 @@ static NSArray<NSArray<NSString *> *> *LoadStrokes(NSString *path) {
     return strokes;
 }
 
+/// Feeds a stroke's recorded frames ("F time count id:x,y ...", in mm) to a recognizer, ending with a lift if the
+/// recording did not. Positions are scaled by `scale` (to correct a recording made with a wrong screen size), and the
+/// screen is `screenWidthMM` wide at `pointsPerMM`.
+static void ReplayFrames(NSArray<NSString *> *frames, TUCGestureRecognizer *recognizer, CGSize scale, double screenWidthMM,
+                         double pointsPerMM, void (^handle)(TUCGestureEvent event, double now)) {
+    NSMutableArray<NSString *> *all = [frames mutableCopy];
+    NSArray<NSString *> *lastParts = [all.lastObject componentsSeparatedByString:@" "];
+    if (lastParts[2].integerValue != 0) [all addObject:[NSString stringWithFormat:@"F %f 0", lastParts[1].doubleValue + 0.01]];
+
+    for (NSString *line in all) {
+        NSArray<NSString *> *p = [line componentsSeparatedByString:@" "];
+        double now = p[1].doubleValue;
+        NSInteger n = MIN(p[2].integerValue, 16);
+        TUCContact contacts[16];
+        for (NSInteger i = 0; i < n; i++) {
+            NSArray<NSString *> *idAndXY = [p[3 + i] componentsSeparatedByString:@":"];
+            NSArray<NSString *> *xy = [idAndXY[1] componentsSeparatedByString:@","];
+            contacts[i].identifier = idAndXY[0].integerValue;
+            contacts[i].mm = CGPointMake(xy[0].doubleValue * scale.width, xy[1].doubleValue * scale.height);
+            contacts[i].point = CGPointMake(contacts[i].mm.x * pointsPerMM, contacts[i].mm.y * pointsPerMM);
+        }
+        for (NSValue *v in [recognizer handleContacts:(n ? contacts : NULL) count:n time:now screenWidthMM:screenWidthMM pointsPerMM:pointsPerMM]) {
+            handle(TUCGestureEventFromValue(v), now);
+        }
+    }
+}
+
 static StrokeOutcome ReplayStroke(NSArray<NSString *> *frames, TUCGestureSettings *settings, CGSize scale, NSInteger fingers) {
     TUCGestureRecognizer *r = [TUCGestureRecognizer new];
     [r applySettings:settings];
     TUCSwipeTranslator *t = [TUCSwipeTranslator new];
     t.settings = settings;
-    StrokeOutcome o = {0};
-    double lastTime = 0;
+    __block StrokeOutcome o = {0};
 
-    NSMutableArray<NSString *> *all = [frames mutableCopy];
-    NSArray<NSString *> *lastParts = [all.lastObject componentsSeparatedByString:@" "];
-    if (lastParts[2].integerValue != 0) [all addObject:[NSString stringWithFormat:@"F %f 0", lastParts[1].doubleValue + 0.008]];
-
-    for (NSString *line in all) {
-        NSArray<NSString *> *p = [line componentsSeparatedByString:@" "];
-        double now = p[1].doubleValue;
-        lastTime = now;
-        NSInteger n = p[2].integerValue;
-        TUCContact contacts[16];
-        for (NSInteger i = 0; i < n && i < 16; i++) {
-            NSArray<NSString *> *idAndXY = [p[3 + i] componentsSeparatedByString:@":"];
-            NSArray<NSString *> *xy = [idAndXY[1] componentsSeparatedByString:@","];
-            contacts[i].identifier = idAndXY[0].integerValue;
-            contacts[i].mm = CGPointMake(xy[0].doubleValue * scale.width, xy[1].doubleValue * scale.height);
-            contacts[i].point = CGPointMake(xy[0].doubleValue * 1.51, xy[1].doubleValue * 1.57);  // 1024 x 600 points over 677 x 381
-        }
-        for (NSValue *v in [r handleContacts:(n ? contacts : NULL) count:n time:now screenWidthMM:677 * scale.width pointsPerMM:1024 / (677 * scale.width)]) {
-            TUCGestureEvent e = TUCGestureEventFromValue(v);
-            if (e.kind != TUCGestureKindSwipe || e.fingers < 3) continue;
+    ReplayFrames(frames, r, scale, 677 * scale.width, 1024 / (677 * scale.width), ^(TUCGestureEvent e, double now) {
+            if (e.kind != TUCGestureKindSwipe || e.fingers < 3) return;
             // A three-finger swipe that a late fourth finger takes over is cancelled and restarted: count only the final one.
             if (e.phase == TUCGesturePhaseBegan && e.fingers == fingers) o.swipesBegan++;
             o.fingers = e.fingers;
@@ -602,9 +648,7 @@ static StrokeOutcome ReplayStroke(NSArray<NSString *> *frames, TUCGestureSetting
                 if (native.phase == TUCPhaseEnded) o.committed = YES;
                 if (native.phase == TUCPhaseCancelled) o.committed = NO;
             }
-        }
-    }
-    (void)lastTime;
+    });
     return o;
 }
 
@@ -621,10 +665,10 @@ static void testRecordedMultiFingerStrokes(void) {
     CHECK(strokes.count == 24, @"strokes: %lu", strokes.count);
     if (strokes.count != 24) return;
 
-    // Swipes routed for the finger counts each stroke used, so every one of them should post and commit.
-    TUCGestureSettings *threeFingers = [TUCGestureSettings defaultSettings];
-    TUCGestureSettings *fourFingers = [TUCGestureSettings defaultSettings];
-    fourFingers.missionControlFingers = 4;
+    // Swipes routed for the finger counts each stroke used, so every one of them should post and commit. Strokes 0, 1
+    // and 16 are left out: short, unclear strokes (0.12-0.34 s) whose intended gesture cannot be told from the data.
+    TUCGestureSettings *threeFingers = Swipes(3, 3, NO, TUCPagesTriggerTwoFingerScroll);
+    TUCGestureSettings *fourFingers = Swipes(4, 4, NO, TUCPagesTriggerTwoFingerScroll);
 
     struct { int index; NSInteger fingers; TUCSwipeAxis axis; int sign; const char *label; } expected[] = {
         { 2, 3, TUCSwipeAxisHorizontal, -1, "3-finger left" },
@@ -675,30 +719,12 @@ static void testRecordedTwoFingerTaps(void) {
     currentTest = @"recorded two-finger taps";
     CHECK(strokes.count == 24, @"strokes: %lu", strokes.count);
 
-    NSInteger twoFingerTaps = 0, otherTaps = 0;
+    __block NSInteger twoFingerTaps = 0, otherTaps = 0;
     for (NSArray<NSString *> *stroke in strokes) {
-        TUCGestureRecognizer *r = [TUCGestureRecognizer new];
-        NSMutableArray<NSString *> *frames = [stroke mutableCopy];
-        if (![[frames.lastObject componentsSeparatedByString:@" "][2] isEqualToString:@"0"]) {
-            [frames addObject:[NSString stringWithFormat:@"F %f 0", [[frames.lastObject componentsSeparatedByString:@" "][1] doubleValue] + 0.03]];
-        }
-        for (NSString *line in frames) {
-            NSArray<NSString *> *p = [line componentsSeparatedByString:@" "];
-            NSInteger n = p[2].integerValue;
-            TUCContact contacts[16];
-            for (NSInteger i = 0; i < n && i < 16; i++) {
-                NSArray<NSString *> *idAndXY = [p[3 + i] componentsSeparatedByString:@":"];
-                NSArray<NSString *> *xy = [idAndXY[1] componentsSeparatedByString:@","];
-                contacts[i].identifier = idAndXY[0].integerValue;
-                contacts[i].mm = CGPointMake(xy[0].doubleValue, xy[1].doubleValue);
-                contacts[i].point = CGPointMake(xy[0].doubleValue * 6.65, xy[1].doubleValue * 6.65);
-            }
-            for (NSValue *v in [r handleContacts:(n ? contacts : NULL) count:n time:p[1].doubleValue screenWidthMM:154 pointsPerMM:6.65]) {
-                TUCGestureEvent e = TUCGestureEventFromValue(v);
-                if (e.kind != TUCGestureKindTap) continue;
-                if (e.fingers == 2) twoFingerTaps++; else otherTaps++;
-            }
-        }
+        ReplayFrames(stroke, [TUCGestureRecognizer new], CGSizeMake(1, 1), 154, 6.65, ^(TUCGestureEvent e, double now) {
+            if (e.kind != TUCGestureKindTap) return;
+            if (e.fingers == 2) twoFingerTaps++; else otherTaps++;
+        });
     }
     CHECK(twoFingerTaps == 24 && otherTaps == 0, @"two-finger taps %ld, other taps %ld", (long)twoFingerTaps, (long)otherTaps);
 }
@@ -715,7 +741,34 @@ static void testQuickTwoFingerTapIsStillTwoFingers(void) {
     [e hold:@[@[@1, @50, @60]] frames:20];
     [e frame:@[@[@1, @50, @60], @[@2, @52, @61]]];
     [e lift];
-    CHECK(![e has:TUCGestureKindTap] || [e first:TUCGestureKindTap].fingers == 1, @"got a %ld-finger tap", (long)[e first:TUCGestureKindTap].fingers);
+    CHECK([e ofKind:TUCGestureKindTap].count == 1 && [e first:TUCGestureKindTap].fingers == 1,
+          @"expected one one-finger tap, got %lu taps", [e ofKind:TUCGestureKindTap].count);
+}
+
+static void testFourFingersLandingInOneFrameMeasureFromWhereTheyLanded(void) {
+    currentTest = @"four fingers landing in the first frame";
+    Driver *d = [Driver new];
+    NSArray *four = @[@[@1, @100, @100], @[@2, @120, @95], @[@3, @140, @95], @[@4, @160, @100]];
+    // All four land together, then move straight up 3 mm a frame: the first move happens before the count settles.
+    [d frame:four];
+    [d move:four dx:0 dy:-30 frames:10];
+    [d lift];
+    TUCGestureEvent last = [d last:TUCGestureKindSwipe];
+    CHECK(last.axis == TUCSwipeAxisVertical && fabs(last.value + 30) < 0.01, @"travel should be the whole -30 mm, got %f", last.value);
+}
+
+static void testScrollVelocityOfAShortFlick(void) {
+    currentTest = @"short flick velocity";
+    TUCScrollVelocity *v = [TUCScrollVelocity new];
+    // 40 ms of 10 pt every 10 ms: 1000 pt/s, whatever the 100 ms window.
+    for (int i = 0; i < 4; i++) [v addDx:0 dy:10 now:1.0 + i * 0.01];
+    CGVector speed = [v velocityAt:1.03];
+    CHECK(fabs(speed.dy - 1000) < 100, @"a 40 ms flick reads at its own speed, got %f pt/s", speed.dy);
+
+    TUCScrollVelocity *steady = [TUCScrollVelocity new];
+    for (int i = 0; i < 30; i++) [steady addDx:0 dy:5 now:2.0 + i * 0.01];
+    CHECK(fabs([steady velocityAt:2.29].dy - 500) < 50, @"a steady scroll reads 500 pt/s, got %f", [steady velocityAt:2.29].dy);
+    CHECK([steady velocityAt:2.40].dy == 0, @"stopped before lifting: no speed");
 }
 
 int main(void) {
@@ -744,6 +797,9 @@ int main(void) {
         testMomentumCoastsAndStops();
         testClickCounter();
         testScrollBoost();
+        testDefaultsAndRouting();
+        testFourFingersLandingInOneFrameMeasureFromWhereTheyLanded();
+        testScrollVelocityOfAShortFlick();
         testRecordedMultiFingerStrokes();
         testRecordedTwoFingerTaps();
         testQuickTwoFingerTapIsStillTwoFingers();

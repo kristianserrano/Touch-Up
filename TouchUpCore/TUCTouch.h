@@ -19,9 +19,6 @@ NS_ASSUME_NONNULL_BEGIN
 @property BOOL isOnSurface; //tip
 @property BOOL confidenceFlag;
 
-@property CGSize size;
-@property CGFloat azimuth;
-
 @property (nonatomic) NSTouchPhase phase;
 @property NSTouchPhase previousPhase;
 
@@ -38,9 +35,6 @@ NS_ASSUME_NONNULL_BEGIN
 - (BOOL)isActive;
 
 - (NSComparisonResult) compareWithAnotherTouch:(TUCTouch*) anotherTouch;
-
-- (CGPoint)trajectory;
-- (CGPoint)trajectorySign;
 
 @end
 

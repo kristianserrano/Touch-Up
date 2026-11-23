@@ -10,10 +10,10 @@ import CoreGraphics
 
 /// Per-digitizer settings, keyed by `HIDLocationID` and persisted to `UserDefaults`.
 ///
-/// Only the screen identity (`screenID` + `screenUUID`) and `additionalRotation` are stored.
+/// Only the screen identity (`screenID` + `screenUUID`), `additionalRotation` and `screenDiagonalInches` are stored.
 /// The actually resolved `TUCScreen` is *not* kept here: the screen list is rebuilt from
 /// scratch on every display reconfiguration, so any held reference would go stale. The screen
-/// is therefore resolved lazily from this identity (see `TouchUp.resolvedMapping(forLocationID:)`).
+/// is therefore resolved lazily from this identity (see `TouchUp.screen(forDigitizer:)`).
 struct DigitizerConfig: Codable, Hashable {
     /// `CGDirectDisplayID` — effectively the index in the screen arrangement. Weaker match.
     var screenID: UInt?
@@ -24,14 +24,23 @@ struct DigitizerConfig: Codable, Hashable {
     var screenDiagonalInches: Double?
 }
 
-/// How confidently a digitizer's stored screen identity could be resolved against the
-/// currently connected screens. Transient (computed on every resolution), never persisted.
-/// Intended purely as a UI hint to flag potentially wrong mappings.
-enum ScreenMatch {
-    case exact       // UUID hit — safe
-    case idFallback  // only the display ID matched; UUID gone/changed (e.g. after a rearrange)
-    case implicit    // no stored match; fell back to the most recently added screen
-    case unmapped    // no screen could be resolved at all
+/// A screen's size from its diagonal, and back. The visible area of a diagonal in a frame's aspect ratio is what the
+/// Screen size setting means (points are square, so the frame's aspect is the glass's).
+enum ScreenSize {
+    static let millimetresPerInch = 25.4
+
+    static func visibleArea(diagonalInches: Double, aspect: CGSize) -> CGSize {
+        guard aspect.width > 0, aspect.height > 0 else { return .zero }
+        let diagonal = Double(hypot(aspect.width, aspect.height))
+        let scale = diagonalInches * millimetresPerInch / diagonal
+        return CGSize(width: aspect.width * scale, height: aspect.height * scale)
+    }
+
+    /// The diagonal of a size in millimetres, in inches; nil for no size.
+    static func diagonalInches(of size: CGSize) -> Double? {
+        guard size.width > 0, size.height > 0 else { return nil }
+        return Double(hypot(size.width, size.height)) / millimetresPerInch
+    }
 }
 
 struct Digitizer: Codable, Hashable, Identifiable {

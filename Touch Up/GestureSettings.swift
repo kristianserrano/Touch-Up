@@ -20,16 +20,13 @@ enum SwipeFingerCount: String, Codable, CaseIterable {
 /// One setting's value, as the catalog and the views handle them by name.
 enum SettingValue: Equatable {
     case bool(Bool)
-    case int(Int)
     case double(Double)
     case string(String)
 
     var bool: Bool? { if case .bool(let v) = self { return v } else { return nil } }
-    var int: Int? { if case .int(let v) = self { return v } else { return nil } }
     var double: Double? {
         switch self {
         case .double(let v): return v
-        case .int(let v): return Double(v)
         default: return nil
         }
     }
@@ -155,6 +152,46 @@ struct GestureSettings: Codable, Equatable {
         return true
     }
 
+    // MARK: Migration
+
+    /// The settings an earlier build of this fork saved as separate "gesture.*" keys, read with `read` (UserDefaults'
+    /// `object(forKey:)`); nil if it saved none. Missing keys keep their defaults, and clashes are resolved.
+    static func migratingLegacyKeys(_ read: (String) -> Any?) -> GestureSettings? {
+        guard read("gesture.zoom") != nil else { return nil }
+        var s = GestureSettings()
+        func bool(_ key: String, _ fallback: Bool) -> Bool { (read(key) as? Bool) ?? fallback }
+        func int(_ key: String) -> Int? { read(key) as? Int }
+        func fingers(_ key: String, _ fallback: SwipeFingerCount) -> SwipeFingerCount {
+            switch int(key) { case 3: .Three; case 4: .Four; default: fallback }
+        }
+        s.ScrollDirection = bool("gesture.naturalScrolling", true) ? .Natural : .Standard
+        s.ScrollMomentum = bool("gesture.scrollMomentum", s.ScrollMomentum)
+        s.SecondaryClick = bool("gesture.secondaryClick", s.SecondaryClick)
+        s.LookUp = bool("gesture.lookUp", s.LookUp)
+        s.Zoom = bool("gesture.zoom", s.Zoom)
+        s.SmartZoom = bool("gesture.smartZoom", s.SmartZoom)
+        s.Rotate = bool("gesture.rotate", s.Rotate)
+        s.SwipeBetweenPages = bool("gesture.swipeBetweenPages", s.SwipeBetweenPages)
+        // The old build saved the framework's raw values: 0 two-finger scroll, 1 three-finger swipe, 2 two or three.
+        if let trigger = int("gesture.pagesTrigger") {
+            s.PagesTrigger = [0: .TwoFingerScroll, 1: .ThreeFingerSwipe, 2: .TwoOrThreeFingerSwipe][trigger] ?? s.PagesTrigger
+        }
+        s.SwipeBetweenDesktops = bool("gesture.swipeBetweenFullScreenApps", s.SwipeBetweenDesktops)
+        s.DesktopsFingers = fingers("gesture.fullScreenAppsFingers", s.DesktopsFingers)
+        s.MissionControl = bool("gesture.missionControl", s.MissionControl)
+        s.AppExpose = bool("gesture.appExpose", s.AppExpose)
+        s.MissionControlFingers = fingers("gesture.missionControlFingers", s.MissionControlFingers)
+        s.Launchpad = bool("gesture.launchpad", s.Launchpad)
+        s.ShowDesktop = bool("gesture.showDesktop", s.ShowDesktop)
+        s.NotificationCenter = bool("gesture.notificationCenter", s.NotificationCenter)
+        s.linkExposeFingers()
+        // The old build had its own rule; settle any clash the way the window would (the gestures in catalog order).
+        for gesture in GestureConflicts.gestures where s[gesture]?.bool == true {
+            GestureConflicts.resolve(&s, changed: gesture)
+        }
+        return s
+    }
+
     // MARK: Rules
 
     /// Mission Control (swipe up) and App Exposé (swipe down) share their finger count, as they do in macOS: the swipe that
@@ -168,7 +205,9 @@ struct GestureSettings: Codable, Equatable {
     }
 
     /// The settings after these changes, made in order, each followed by the rules (the shared finger count, then the
-    /// trigger clashes), as T650Native's SettingsStore applies them. Also returns the gestures a clash turned off.
+    /// trigger clashes), as T650Native's SettingsStore applies them. Also returns the gestures a clash turned off: with
+    /// today's gestures there are none (each clashing one has a free trigger to move to), but a future gesture with a
+    /// single trigger would be turned off, as in T650Native.
     func applying(_ changes: [(name: String, value: SettingValue)]) -> (settings: GestureSettings, turnedOff: [String]) {
         var next = self
         var off: [String] = []
@@ -181,9 +220,6 @@ struct GestureSettings: Codable, Equatable {
         }
         return (next, off.filter { next[$0]?.bool == false })
     }
-
-    // MARK: To the framework
-
 
 }
 

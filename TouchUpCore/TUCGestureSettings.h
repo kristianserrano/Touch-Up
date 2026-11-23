@@ -66,7 +66,16 @@ typedef NS_ENUM(NSInteger, TUCPagesTrigger) {
 /// Swipe left from the right edge with two fingers.
 @property BOOL notificationCenter;
 
+/// The defaults: the app's (GestureSettings.swift) and T650Native's. Pages off on three fingers; full-screen apps,
+/// Mission Control and App Exposé on four; Look Up off.
 + (instancetype)defaultSettings;
+
+#pragma mark Routing
+
+/// Whether a sideways swipe with this many fingers swipes between pages (pages on, with a trigger using that count).
+- (BOOL)swipesBetweenPagesWithFingers:(NSInteger)fingers;
+/// Whether a three-finger up/down swipe does anything (Mission Control or App Exposé on three fingers).
+- (BOOL)usesThreeFingerVerticalSwipes;
 
 @end
 

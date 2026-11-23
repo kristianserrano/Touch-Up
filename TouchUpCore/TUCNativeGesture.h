@@ -11,6 +11,7 @@
 //
 
 #import <Foundation/Foundation.h>
+#import <time.h>
 #import "TUCGestureSettings.h"
 
 NS_ASSUME_NONNULL_BEGIN
@@ -70,9 +71,20 @@ static const uint32_t TUCEventTypeGesture = 29;     // rotate, magnify, smart zo
 static const uint32_t TUCEventTypeDockSwipe = 30;
 static const uint64_t TUCGestureFlags = 0x20000100;
 
-// Scroll wheel phase fields.
-static const uint32_t TUCFieldScrollPhase = 99;     // 1 began, 2 changed, 4 ended
-static const uint32_t TUCFieldMomentumPhase = 123;  // 1 begin, 2 continue, 3 end
+
+#pragma mark - Shared helpers
+
+/// Seconds of uptime: the clock the frames, the output and the timers all measure with.
+static inline double TUCUptimeSeconds(void) {
+    return (double)clock_gettime_nsec_np(CLOCK_UPTIME_RAW) / 1e9;
+}
+
+/// Points per millimetre when a screen's size is unknown (~100 dpi).
+static const double TUCFallbackPointsPerMM = 4;
+
+/// Whether TOUCHUP_RECORD is set: the manager prints every frame and recognised event, the output what it does with
+/// scrolling, to stdout (line-buffered by OpenHIDManager), for replaying real strokes in Tests/.
+BOOL TUCRecordingEnabled(void);
 
 
 #pragma mark - Swipes
@@ -160,7 +172,8 @@ typedef struct {
 @property double intervalSeconds;
 @property double radiusPoints;
 - (int64_t)pressAt:(CGPoint)point now:(double)nowSeconds;
-/// A press that starts a drag is always a single click, and the next press does not chain onto it.
+/// A press that starts a drag is always a single click (never the second of a double click); a press right after it
+/// counts as the second.
 - (int64_t)pressForDragAt:(CGPoint)point now:(double)nowSeconds;
 @end
 

@@ -1,32 +1,39 @@
-# Touch-Up
-**Universal user-level driver to support touchscreens on macOS**
+# Magic Touch Up
+**Magic Trackpad gestures for any touchscreen on macOS**
 <hr/>
+
+> Magic Touch Up is a fork of [Touch Up](https://github.com/shueber/Touch-Up) by Sebastian Hueber, rewritten around
+> Magic Trackpad style gestures, a new settings window, and fixes for touchscreens that report oddly. It is not
+> affiliated with the original project or with Apple. The touch-reading core and the TouchUpCore framework come from
+> Touch Up; thanks to Sebastian for making it open source.
 
 Most current touchscreens work with Microsoft Windows out-of-the-box as they implement a standardized communication via USB HID. However, nothing happens when connecting these screens to a Mac.
 The goal of Touch Up was to provide a simple, general-purpose driver that enables plug-and-play support for touchscreens on macOS. 
 The code in this repository provides a user-space driver that reads and processes the HID data into a set of touches and different utilities to inject mouse events into the system.
 
 ## What can you do with this App?
-The Touch Up **utility app** allows you to control your Mac with any connected touch screen. One finger works directly on what it touches; two or more fingers use the same gestures as a Magic Trackpad, posted as native trackpad events:
+The Magic Touch Up **utility app** allows you to control your Mac with any connected touch screen. One finger works directly on what it touches; two or more fingers use the same gestures as a Magic Trackpad, posted as native trackpad events:
 
 - **One finger**: tap to click where you touch; move to drag (select text, move windows); rest the finger to press and hold
-- **Two fingers**: scroll with momentum, pinch to zoom, rotate, tap for a secondary click, double-tap for smart zoom, scroll sideways to swipe between pages, swipe in from the right edge for Notification Center
-- **Three fingers**: swipe between full-screen apps, swipe up for Mission Control and down for App Exposé, tap to Look Up (off by default)
+- **Two fingers**: scroll with momentum and trackpad-style acceleration, pinch to zoom, rotate, tap for a secondary click, double-tap for smart zoom, swipe in from the right edge for Notification Center
+- **Three or four fingers**: swipe between full-screen apps, swipe up for Mission Control and down for App Exposé (four fingers by default), swipe between pages (off by default), three-finger tap to Look Up (off by default)
 - **Four fingers**: pinch for Launchpad, spread for Show Desktop
 
-Every gesture, and the finger counts for swipes, can be changed in the app's settings, which follow the layout of System Settings › Trackpad.
+Every gesture and its finger count can be changed in the settings window; gestures that would share a trigger are moved apart, as in System Settings › Trackpad. Each touchscreen's display and real size are set in the Touchscreens pane.
 The gesture recognition and the native event layout are ported from the T650Native touchpad driver; `Tests/run-tests.sh` runs the tests for the gesture logic.
 
 
 ### Installing the App
-- Compile the app or [download the latest notarized build here](https://github.com/shueber/Touch-Up/releases).
+- Build the app in Xcode (put your signing team in `Config/Local.xcconfig`, see `Config/Shared.xcconfig`). The
+  original Touch Up's [notarized builds](https://github.com/shueber/Touch-Up/releases) do not include this fork's changes.
 - If you wish, move the app into your Applications folder and add it as a Login item.
-- Launch it and allow Accessibility access.
+- Launch it and allow Accessibility access (and Input Monitoring if macOS asks).
 - Plug in your touchscreen and start touching.
 
 
 ### Compatibility
-Touch Up should work with any touchscreen that also works with Windows.
+Magic Touch Up should work with any touchscreen that also works with Windows. If gestures feel wrong, check the
+screen's size in Settings › Touchscreens: some screens report a wrong one.
 We used the following screens for testing:
 
 - Iiyama TF3222MC and T2336MSC-B2

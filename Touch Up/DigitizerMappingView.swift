@@ -91,7 +91,7 @@ struct TouchscreensPane: View {
         HStack(alignment: .top) {
             Label {
                 Text("Allow Accessibility access")
-                Text("Touch Up turns touches into clicks and gestures, which macOS allows only with Accessibility access.")
+                Text("Magic Touch Up turns touches into clicks and gestures, which macOS allows only with Accessibility access.")
             } icon: {
                 Image(systemName: "exclamationmark.triangle.fill")
                     .foregroundStyle(.orange)

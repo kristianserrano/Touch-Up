@@ -35,7 +35,7 @@ struct SettingsView: View {
                 .confirmationDialog("Reset All Settings to Their Defaults?", isPresented: $confirmingReset) {
                     Button("Reset to Defaults", role: .destructive) { model.resetSettingsToDefaults() }
                 } message: {
-                    Text("Every gesture, click and drag setting goes back to how it was when Touch Up was first installed. Touchscreen settings are kept.")
+                    Text("Every gesture, click and drag setting goes back to how it was when Magic Touch Up was first installed. Touchscreen settings are kept.")
                 }
         }
         .overlay(alignment: .bottom) {
@@ -59,7 +59,7 @@ struct SettingsView: View {
         .frame(minWidth: 900, minHeight: 480)
     }
 
-    /// The first pane until another is chosen; Touchscreens first while Touch Up cannot post events yet.
+    /// The first pane until another is chosen; Touchscreens first while the app cannot post events yet.
     private var shownPane: Binding<SettingsPane?> {
         Binding(get: {
             selection ?? (model.isAccessibilityAccessGranted
@@ -341,17 +341,22 @@ struct ConfirmationSheet: View {
 }
 
 
-/// The app's version, credit and link, at the bottom of the sidebar.
+/// The app's version, the credit to the project it is based on, and links to both, at the bottom of the sidebar.
 struct AboutFooter: View {
     var body: some View {
         VStack(spacing: 3) {
             if let version = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String {
-                Text("Touch Up v\(version)")
+                Text("Magic Touch Up v\(version)")
                     .fontWeight(.semibold)
             }
-            Text("Made with 🐑 in Aachen")
-            Link(destination: URL(string: "https://github.com/shueber/Touch-Up")!) {
-                Label("GitHub", systemImage: "link")
+            Text("Based on Touch Up by Sebastian Hueber")
+            HStack(spacing: 10) {
+                Link(destination: URL(string: "https://github.com/kristianserrano/Touch-Up")!) {
+                    Label("Source", systemImage: "link")
+                }
+                Link(destination: URL(string: "https://github.com/shueber/Touch-Up")!) {
+                    Label("Original", systemImage: "link")
+                }
             }
         }
         .font(.caption)

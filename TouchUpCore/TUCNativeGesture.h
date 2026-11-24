@@ -180,10 +180,13 @@ typedef struct {
 
 #pragma mark - Scroll momentum
 
-/// Scroll acceleration, as a trackpad's (T650Native's ScrollScaler.Boost, in mm/s): a stroke slower than ~70 mm/s follows
-/// the fingers exactly; faster ones are boosted, up to 6x at ~270 mm/s. The ramp is squared, so a controlled scroll stays
-/// close to the fingers and only a whip gets most of the boost.
+/// Scroll acceleration for the fingers, fitted to a Mac trackpad's recorded strokes (T650Native's scripts/record-scroll.swift)
+/// as TUCScrollVelocity measures them: up to 100 mm/s the content follows the fingers exactly, then up to 3x at 260 mm/s.
+/// T650Native's numbers differ because it measures speed differently; do not copy them across.
 double TUCScrollBoost(double millimetresPerSecond);
+
+/// How much faster than the fingers the coasting starts, fitted the same way: 1.8x for a gentle stroke, 5x for a flick.
+double TUCLaunchBoost(double millimetresPerSecond);
 
 /// How fast the fingers were scrolling when they lifted (points per second). A finger that stopped and then lifted
 /// must not fling the page.
@@ -193,7 +196,8 @@ double TUCScrollBoost(double millimetresPerSecond);
 - (void)reset;
 @end
 
-/// The coasting after the fingers lift: the speed dies away exponentially, like a real trackpad's inertia.
+/// The coasting after the fingers lift, as a Mac's trackpad coasts: it starts at the fingers' speed with TUCLaunchBoost, and slows
+/// sooner the slower it gets. The steps are already boosted.
 @interface TUCScrollMomentum : NSObject
 /// Points per millimetre, so the thresholds (defined in mm/s) apply on any screen.
 @property double pointsPerMM;

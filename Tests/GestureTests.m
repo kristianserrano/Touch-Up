@@ -667,9 +667,31 @@ static void testMomentumCoastsAndStops(void) {
 
 static void testScrollBoost(void) {
     currentTest = @"scroll boost";
-    CHECK(TUCScrollBoost(0) == 1 && TUCScrollBoost(70) == 1, @"slow strokes follow the fingers");
-    CHECK(TUCScrollBoost(170) > 1 && TUCScrollBoost(170) < 6, @"ramps between");
-    CHECK(TUCScrollBoost(270) == 6 && TUCScrollBoost(1000) == 6, @"6x at full speed");
+    CHECK(TUCScrollBoost(0) == 1 && TUCScrollBoost(100) == 1, @"slow strokes follow the fingers");
+    CHECK(TUCScrollBoost(180) > 1 && TUCScrollBoost(180) < 3, @"ramps between");
+    CHECK(TUCScrollBoost(260) == 3 && TUCScrollBoost(1000) == 3, @"3x at full speed");
+    CHECK(TUCLaunchBoost(0) == 1.8 && TUCLaunchBoost(60) == 1.8, @"a gentle stroke's coasting");
+    CHECK(TUCLaunchBoost(280) == 5 && TUCLaunchBoost(1000) == 5, @"a flick's coasting");
+}
+
+/// Strokes recorded on a MacBook's trackpad (7 px per mm of finger travel): the lift speed as TUCScrollVelocity measures it (mm/s),
+/// how far it coasted (px) and for how long (s).
+static void testMomentumMatchesTheTrackpad(void) {
+    currentTest = @"momentum like the trackpad's";
+    static const double strokes[][3] = {
+        {60, 115, 0.62}, {83, 199, 0.57}, {111, 310, 0.62}, {133, 438, 0.69}, {121, 397, 0.87},
+        {431, 5387, 1.37}, {294, 3657, 1.10}, {408, 4693, 1.05}, {413, 5101, 1.23}, {518, 5208, 1.13},
+    };
+    for (size_t i = 0; i < sizeof(strokes) / sizeof(strokes[0]); i++) {
+        TUCScrollMomentum *m = [TUCScrollMomentum new];
+        m.pointsPerMM = 7;
+        CHECK([m startWithVelocity:CGVectorMake(0, strokes[i][0] * 7)], @"coasts");
+        double total = 0, time = 0;
+        BOOL last = NO;
+        while (!last && time < 10) { total += [m step:1.0 / 120 last:&last].dy; time += 1.0 / 120; }
+        CHECK(total / strokes[i][1] > 0.7 && total / strokes[i][1] < 1.4, @"%.0f mm/s: %.0f px, recorded %.0f", strokes[i][0], total, strokes[i][1]);
+        CHECK(time / strokes[i][2] > 0.6 && time / strokes[i][2] < 1.45, @"%.0f mm/s: %.2f s, recorded %.2f", strokes[i][0], time, strokes[i][2]);
+    }
 }
 
 static void testClickCounter(void) {
@@ -919,6 +941,7 @@ int main(void) {
         testMomentumCoastsAndStops();
         testClickCounter();
         testScrollBoost();
+        testMomentumMatchesTheTrackpad();
         testDefaultsAndRouting();
         testFourFingersLandingInOneFrameMeasureFromWhereTheyLanded();
         testScrollVelocityOfAShortFlick();

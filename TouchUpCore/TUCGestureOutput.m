@@ -291,10 +291,8 @@ static CGEventFlags TUCHeldClickModifiers(void) {
 }
 
 /// Finger movement (points) -> whole wheel pixels, carrying the fraction. Natural: the content follows the fingers.
-/// The acceleration for how fast it is going (points per second) applies to the fingers and the coasting alike.
-- (void)wheelsFor:(CGVector)d speed:(double)pointsPerSecond wheel1:(int32_t *)wheel1 wheel2:(int32_t *)wheel2 {
-    double ppmm = self.momentum.pointsPerMM > 0 ? self.momentum.pointsPerMM : TUCFallbackPointsPerMM;
-    double gain = TUCScrollBoost(pointsPerSecond / ppmm);
+/// `gain` is the fingers' acceleration; the coasting is already boosted as it starts.
+- (void)wheelsFor:(CGVector)d gain:(double)gain wheel1:(int32_t *)wheel1 wheel2:(int32_t *)wheel2 {
     _carryX += d.dx * gain;
     _carryY += d.dy * gain;
     *wheel2 = (int32_t)trunc(_carryX);
@@ -313,7 +311,8 @@ static CGEventFlags TUCHeldClickModifiers(void) {
     CGVector v = [self.velocity velocityAt:now];
 
     int32_t wheel1, wheel2;
-    [self wheelsFor:d speed:hypot(v.dx, v.dy) wheel1:&wheel1 wheel2:&wheel2];
+    double ppmm = self.momentum.pointsPerMM > 0 ? self.momentum.pointsPerMM : TUCFallbackPointsPerMM;
+    [self wheelsFor:d gain:TUCScrollBoost(hypot(v.dx, v.dy) / ppmm) wheel1:&wheel1 wheel2:&wheel2];
     if (wheel1 != 0 || wheel2 != 0) {
         // The fingers' scroll is a phased gesture, like a trackpad's: began, then changed, then ended.
         [self postScrollWheel1:wheel1 wheel2:wheel2 scrollPhase:_fingerScrollBegan ? kCGScrollPhaseChanged : kCGScrollPhaseBegan momentumPhase:0];
@@ -372,7 +371,7 @@ static CGEventFlags TUCHeldClickModifiers(void) {
     BOOL last = NO;
     CGVector d = [self.momentum step:dt last:&last];
     int32_t wheel1, wheel2;
-    [self wheelsFor:d speed:hypot(d.dx, d.dy) / dt wheel1:&wheel1 wheel2:&wheel2];
+    [self wheelsFor:d gain:1 wheel1:&wheel1 wheel2:&wheel2];
     if (wheel1 != 0 || wheel2 != 0) {
         [self postScrollWheel1:wheel1 wheel2:wheel2 scrollPhase:0 momentumPhase:_momentumBegun ? kCGMomentumScrollPhaseContinue : kCGMomentumScrollPhaseBegin];
         _momentumBegun = YES;

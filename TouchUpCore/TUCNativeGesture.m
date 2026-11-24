@@ -417,13 +417,18 @@ BOOL TUCRecordingEnabled(void) {
 
 #pragma mark - Scroll velocity & momentum
 
-/// A full flick, in mm/s: the scroll boost is at its most from here, and so is the momentum's longer coasting.
-static const double TUCFullFlickSpeed = 270;
+/// `from` up to `slow` mm/s, `to` from `fast` mm/s, and a squared ramp between.
+static double TUCSpeedRamp(double mmPerSecond, double slow, double fast, double from, double to) {
+    double t = fmax(0, fmin(1, (mmPerSecond - slow) / (fast - slow)));
+    return from + (to - from) * t * t;
+}
 
 double TUCScrollBoost(double mmPerSecond) {
-    static const double precise = 70, maxBoost = 5;  // slower than this follows the fingers; 5 extra is 6x in all
-    double t = fmax(0, fmin(1, (mmPerSecond - precise) / (TUCFullFlickSpeed - precise)));
-    return 1 + maxBoost * t * t;
+    return TUCSpeedRamp(mmPerSecond, 100, 260, 1, 3);
+}
+
+double TUCLaunchBoost(double mmPerSecond) {
+    return TUCSpeedRamp(mmPerSecond, 60, 280, 1.8, 5);
 }
 
 @implementation TUCScrollVelocity {
@@ -478,15 +483,17 @@ static const double TUCVelocityMinSpan = 0.02; // a single sample is taken as at
 
 
 @implementation TUCScrollMomentum {
-    double _vx, _vy, _tau;
+    double _speed;       // mm/s the content is moving, boosted
+    CGVector _direction; // unit vector
 }
 
-// From T650Native ScrollMomentum, converted from T650 device units (~22 per mm) to mm/s.
-static const double TUCMomentumTimeConstant = 0.35;  // seconds for the speed to fall to 1/e, for an ordinary stroke
-static const double TUCMomentumFlickFloor = 45;      // mm/s: below this a stroke is ordinary, up to a full flick
-static const double TUCMomentumFlickBoost = 2.0;     // a full flick coasts (1 + this) times as long
-static const double TUCMomentumStartSpeed = 27;      // mm/s needed to start coasting
-static const double TUCMomentumStopSpeed = 3;        // mm/s: below this it has come to rest
+// The time constant shrinks with the speed: tau = TimeConstant * (speed / ReferenceSpeed) ^ SpeedPower. A flick glides and the
+// slow end stops quickly. (T650Native's ScrollMomentum; its 1000 px/s at 7 px per mm is 143 mm/s.)
+static const double TUCMomentumTimeConstant = 0.22;   // seconds, at the reference speed
+static const double TUCMomentumReferenceSpeed = 143;  // mm/s
+static const double TUCMomentumSpeedPower = 0.2;      // 0 would be a plain exponential
+static const double TUCMomentumStartSpeed = 27;       // mm/s the fingers need to start coasting
+static const double TUCMomentumStopSpeed = 4.3;       // mm/s: below this it has come to rest
 
 - (instancetype)init {
     if (self = [super init]) _pointsPerMM = TUCFallbackPointsPerMM;
@@ -498,10 +505,8 @@ static const double TUCMomentumStopSpeed = 3;        // mm/s: below this it has 
     double speedMM = hypot(v.dx, v.dy) / ppmm;
     if (speedMM < TUCMomentumStartSpeed) return NO;
 
-    double flick = fmax(0, fmin(1, (speedMM - TUCMomentumFlickFloor) / (TUCFullFlickSpeed - TUCMomentumFlickFloor)));
-    _tau = TUCMomentumTimeConstant * (1 + TUCMomentumFlickBoost * flick);
-    _vx = v.dx;
-    _vy = v.dy;
+    _speed = speedMM * TUCLaunchBoost(speedMM);
+    _direction = CGVectorMake(v.dx / hypot(v.dx, v.dy), v.dy / hypot(v.dx, v.dy));
     _active = YES;
     return YES;
 }
@@ -511,23 +516,28 @@ static const double TUCMomentumStopSpeed = 3;        // mm/s: below this it has 
         if (last) *last = YES;
         return CGVectorMake(0, 0);
     }
-    double decay = exp(-dt / _tau);
-    double travel = _tau * (1 - decay);  // the integral of the speed over dt, per unit of starting speed
-    CGVector d = CGVectorMake(_vx * travel, _vy * travel);
-    _vx *= decay;
-    _vy *= decay;
+    // dv/dt = -v / tau(v), so v^p falls linearly with time; the distance is the integral of tau over the speed lost. Both are
+    // exact, so the step size does not matter.
+    double p = TUCMomentumSpeedPower;
+    double scale = TUCMomentumTimeConstant / pow(TUCMomentumReferenceSpeed, p);
+    double before = _speed;
+    double after = pow(fmax(0, pow(before, p) - p * dt / scale), 1 / p);
+    BOOL done = after < TUCMomentumStopSpeed;
+    if (done) {
+        after = fmin(before, TUCMomentumStopSpeed);
+        _active = NO;
+    }
+    _speed = after;
+    if (last) *last = done;
 
     double ppmm = self.pointsPerMM > 0 ? self.pointsPerMM : TUCFallbackPointsPerMM;
-    BOOL done = hypot(_vx, _vy) / ppmm < TUCMomentumStopSpeed;
-    if (done) _active = NO;
-    if (last) *last = done;
-    return d;
+    double travel = scale * (pow(before, p + 1) - pow(after, p + 1)) / (p + 1) * ppmm;
+    return CGVectorMake(_direction.dx * travel, _direction.dy * travel);
 }
 
 - (void)cancel {
     _active = NO;
-    _vx = 0;
-    _vy = 0;
+    _speed = 0;
 }
 
 @end

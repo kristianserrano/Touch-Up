@@ -219,7 +219,6 @@ extension GestureSettings {
     /// The settings as the framework takes them.
     var core: TUCGestureSettings {
         let s = TUCGestureSettings()
-        s.naturalScrolling = ScrollDirection == .Natural
         s.scrollMomentum = ScrollMomentum
         s.secondaryClick = SecondaryClick
         s.lookUp = LookUp

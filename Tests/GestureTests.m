@@ -116,21 +116,137 @@ static void testOneFingerTapClicksWhereItLanded(void) {
     CHECK(![d has:TUCGestureKindDragBegan], @"a tap must not drag");
 }
 
-static void testOneFingerMovePressesAtOriginAndDrags(void) {
-    currentTest = @"one finger drag";
+static void testOneFingerMoveScrolls(void) {
+    currentTest = @"one finger scroll";
     Driver *d = [Driver new];
     NSArray *start = @[@[@1, @50, @60]];
     [d hold:start frames:5];
+    [d move:start dx:0 dy:30 frames:15];
+    [d lift];
+
+    CHECK(![d has:TUCGestureKindDragBegan], @"a moving finger must not press the button");
+    CHECK([d has:TUCGestureKindScroll], @"no scroll");
+    double total = 0;
+    for (NSValue *v in [d ofKind:TUCGestureKindScroll]) total += TUCGestureEventFromValue(v).delta.dy;
+    // The slop is not caught up in a jump: the scroll is the stroke less (about) the 3 mm spent deciding.
+    CHECK(total > 25 * kPPMM && total <= 30 * kPPMM, @"scroll should follow the finger down, total dy %f", total);
+    TUCGestureEvent last = [d last:TUCGestureKindScroll];
+    CHECK(fabs(last.point.y - 90 * kPPMM) < 0.001, @"the scroll is at the finger, got y=%f", last.point.y);
+    CHECK([d ofKind:TUCGestureKindScrollEnd].count == 1, @"ScrollEnd count %lu", [d ofKind:TUCGestureKindScrollEnd].count);
+    CHECK(![d has:TUCGestureKindTap], @"a scroll must not tap");
+}
+
+static void testOneFingerHoldThenMoveDrags(void) {
+    currentTest = @"hold then drag";
+    Driver *d = [Driver new];
+    NSArray *start = @[@[@1, @50, @60]];
+    [d hold:start frames:70];  // 0.56 s: past the long press
     [d move:start dx:20 dy:0 frames:10];
     [d lift];
 
     CHECK([d has:TUCGestureKindDragBegan], @"no DragBegan");
     TUCGestureEvent began = [d first:TUCGestureKindDragBegan];
     CHECK(began.point.x == 200 && began.point.y == 240, @"press should be where the finger landed, got %f,%f", began.point.x, began.point.y);
+    CHECK(began.value == 0, @"a press and hold does not follow a tap");
     TUCGestureEvent lastMove = [d last:TUCGestureKindDragMoved];
     CHECK(fabs(lastMove.point.x - 280) < 0.001, @"drag should follow the finger to x=280, got %f", lastMove.point.x);
     CHECK([d ofKind:TUCGestureKindDragEnded].count == 1, @"DragEnded count %lu", [d ofKind:TUCGestureKindDragEnded].count);
+    CHECK(![d has:TUCGestureKindScroll], @"a drag must not scroll");
     CHECK(![d has:TUCGestureKindTap], @"a drag must not tap");
+}
+
+static void testDoubleTapAndDragDragsAtOnce(void) {
+    currentTest = @"double-tap and drag";
+    Driver *d = [Driver new];
+    [d hold:@[@[@1, @50, @60]] frames:5];
+    [d lift];
+    [d hold:@[@[@2, @52, @60]] frames:5];  // back down near the tap, soon after
+    [d move:@[@[@2, @52, @60]] dx:20 dy:0 frames:10];
+    [d lift];
+
+    CHECK([d ofKind:TUCGestureKindTap].count == 1, @"the first touch is a tap (%lu)", [d ofKind:TUCGestureKindTap].count);
+    CHECK(![d has:TUCGestureKindScroll], @"the second touch must not scroll");
+    CHECK([d has:TUCGestureKindDragBegan], @"the second touch should drag");
+    TUCGestureEvent began = [d first:TUCGestureKindDragBegan];
+    CHECK(began.value == 1, @"the press follows a tap (value %f)", began.value);
+    CHECK(began.point.x == 208, @"press where the second finger landed, got x=%f", began.point.x);
+    CHECK(fabs([d last:TUCGestureKindDragMoved].point.x - 288) < 0.001, @"drag follows the finger");
+    CHECK([d ofKind:TUCGestureKindDragEnded].count == 1, @"one release");
+}
+
+static void testDoubleTapIsStillTwoTaps(void) {
+    currentTest = @"double tap";
+    Driver *d = [Driver new];
+    [d hold:@[@[@1, @50, @60]] frames:5];
+    [d lift];
+    [d hold:@[@[@2, @51, @60]] frames:5];
+    [d lift];
+
+    CHECK([d ofKind:TUCGestureKindTap].count == 2, @"two taps (%lu)", [d ofKind:TUCGestureKindTap].count);
+    CHECK(![d has:TUCGestureKindDragBegan], @"no drag");
+}
+
+static void testMovingAfterATapElsewhereOrLaterScrolls(void) {
+    currentTest = @"tap, then scroll";
+    // Somewhere else on the screen.
+    Driver *d = [Driver new];
+    [d hold:@[@[@1, @50, @60]] frames:5];
+    [d lift];
+    [d hold:@[@[@2, @100, @60]] frames:5];
+    [d move:@[@[@2, @100, @60]] dx:0 dy:20 frames:10];
+    [d lift];
+    CHECK([d has:TUCGestureKindScroll] && ![d has:TUCGestureKindDragBegan], @"away from the tap: a scroll");
+
+    // The same place, after the double-click time.
+    d = [Driver new];
+    [d hold:@[@[@1, @50, @60]] frames:5];
+    [d lift];
+    d.now += 0.6;
+    [d hold:@[@[@2, @50, @60]] frames:5];
+    [d move:@[@[@2, @50, @60]] dx:0 dy:20 frames:10];
+    [d lift];
+    CHECK([d has:TUCGestureKindScroll] && ![d has:TUCGestureKindDragBegan], @"too late: a scroll");
+
+    // After a scroll, not a tap.
+    d = [Driver new];
+    [d move:@[@[@1, @50, @60]] dx:0 dy:20 frames:10];
+    [d lift];
+    [d hold:@[@[@2, @50, @80]] frames:5];
+    [d move:@[@[@2, @50, @80]] dx:0 dy:20 frames:10];
+    [d lift];
+    CHECK(![d has:TUCGestureKindDragBegan], @"a scroll after a scroll does not drag");
+}
+
+static void testOneFingerScrollNeverTurnsIntoAPress(void) {
+    currentTest = @"scroll then rest";
+    Driver *d = [Driver new];
+    NSArray *start = @[@[@1, @50, @60]];
+    [d hold:start frames:5];
+    [d move:start dx:0 dy:10 frames:5];
+    [d hold:@[@[@1, @50, @70]] frames:100];  // resting mid-scroll for 0.8 s
+    [d lift];
+
+    CHECK(![d has:TUCGestureKindDragBegan], @"resting during a scroll must not press");
+    CHECK([d ofKind:TUCGestureKindScrollEnd].count == 1, @"one ScrollEnd");
+}
+
+static void testOneFingerScrollThenSecondFingerPinches(void) {
+    currentTest = @"one finger scroll, then pinch";
+    Driver *d = [Driver new];
+    NSArray *start = @[@[@1, @50, @60]];
+    [d hold:start frames:5];
+    [d move:start dx:0 dy:10 frames:5];
+    NSArray *pair = @[@[@1, @50, @70], @[@2, @80, @70]];
+    [d hold:pair frames:5];
+    NSUInteger endsBeforePinch = [d ofKind:TUCGestureKindScrollEnd].count;
+    for (int i = 1; i <= 15; i++) {
+        [d frame:@[@[@1, @(50 - i), @70], @[@2, @(80 + i), @70]]];
+    }
+    [d lift];
+
+    CHECK(endsBeforePinch == 1, @"the one-finger scroll ends when the second finger settles (%lu)", endsBeforePinch);
+    CHECK([d has:TUCGestureKindPinch], @"the two fingers should pinch");
+    CHECK(![d has:TUCGestureKindDragBegan], @"no press");
 }
 
 static void testOneFingerLongPressPressesTheButton(void) {
@@ -148,7 +264,7 @@ static void testDragFollowsItsFingerWhenASecondLands(void) {
     currentTest = @"drag ignores a second finger";
     Driver *d = [Driver new];
     NSArray *start = @[@[@1, @50, @60]];
-    [d hold:start frames:5];
+    [d hold:start frames:70];
     [d move:start dx:10 dy:0 frames:5];
     [d hold:@[@[@1, @60, @60], @[@2, @100, @100]] frames:10];
     [d move:@[@[@1, @60, @60], @[@2, @100, @100]] dx:0 dy:10 frames:5];
@@ -774,7 +890,13 @@ static void testScrollVelocityOfAShortFlick(void) {
 int main(void) {
     @autoreleasepool {
         testOneFingerTapClicksWhereItLanded();
-        testOneFingerMovePressesAtOriginAndDrags();
+        testOneFingerMoveScrolls();
+        testOneFingerHoldThenMoveDrags();
+        testDoubleTapAndDragDragsAtOnce();
+        testDoubleTapIsStillTwoTaps();
+        testMovingAfterATapElsewhereOrLaterScrolls();
+        testOneFingerScrollNeverTurnsIntoAPress();
+        testOneFingerScrollThenSecondFingerPinches();
         testOneFingerLongPressPressesTheButton();
         testDragFollowsItsFingerWhenASecondLands();
         testTwoFingerTapIsATwoFingerTap();

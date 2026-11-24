@@ -106,8 +106,13 @@ static CGPoint TUCCentroidPoint(const TUCContact *contacts, NSInteger count) {
     BOOL multiTouched;                 // 2+ fingers settled at some point
     double maxTravelMM;                // the furthest any finger got from where it landed
     CGPoint tapPoint;                  // where the first finger landed
+    CGPoint tapMM;
+    BOOL afterTap;                     // landed where the last tap was, soon after it: moving drags (double-tap and drag)
 
     // One finger
+    BOOL oneScrolling;                 // the finger moved before the long press: it scrolls, as on a tablet
+    NSInteger scrollID;
+    CGPoint lastScrollPoint;
     BOOL dragging;
     BOOL dragDone;                     // a drag ended this session: nothing else happens until all fingers lift
     NSInteger dragID;
@@ -166,6 +171,9 @@ static NSValue *TUCWrapContact(TUCContact c) {
 
 @implementation TUCGestureRecognizer {
     TUCGestureSession *_session;
+    BOOL _hasLastTap;                  // the last session was a one-finger tap...
+    double _lastTapTime;               // ...that lifted then...
+    CGPoint _lastTapMM;                // ...here
 }
 
 static const NSInteger TUCPinchFingers = 4;     // Launchpad and Show Desktop are four-finger pinches; this many or more
@@ -188,6 +196,8 @@ static const NSInteger TUCMaxSwipeFingers = 4;  // more fingers than this do not
         _multiPinchBias = 0.5;
         _dragUpgradeSeconds = 0.3;
         _tapLandingSeconds = 0.1;
+        _doubleTapSeconds = 0.5;
+        _doubleTapZoneMM = 5.0;
 
         [self applySettings:[TUCGestureSettings defaultSettings]];
     }
@@ -201,6 +211,7 @@ static const NSInteger TUCMaxSwipeFingers = 4;  // more fingers than this do not
 
 - (void)reset {
     _session = nil;
+    _hasLastTap = NO;
 }
 
 
@@ -213,7 +224,16 @@ static const NSInteger TUCMaxSwipeFingers = 4;  // more fingers than this do not
 
     if (rawCount == 0 || contacts == NULL) {
         if (_session) {
-            [events addObjectsFromArray:[self endSession:_session now:now]];
+            NSArray<NSValue *> *ended = [self endSession:_session now:now];
+            for (NSValue *v in ended) {
+                TUCGestureEvent e = TUCGestureEventFromValue(v);
+                if (e.kind == TUCGestureKindTap && e.fingers == 1) {
+                    _hasLastTap = YES;
+                    _lastTapTime = now;
+                    _lastTapMM = _session->tapMM;
+                }
+            }
+            [events addObjectsFromArray:ended];
         }
         _session = nil;
         return events;
@@ -230,6 +250,10 @@ static const NSInteger TUCMaxSwipeFingers = 4;  // more fingers than this do not
         s->candidateHasStart = rawCount >= TUCPinchFingers;
         if (s->candidateHasStart) s->candidateStart = TUCCentreOf(contacts, rawCount);
         s->tapPoint = contacts[0].point;
+        s->tapMM = contacts[0].mm;
+        s->afterTap = _hasLastTap && now - _lastTapTime <= self.doubleTapSeconds
+            && hypot(contacts[0].mm.x - _lastTapMM.x, contacts[0].mm.y - _lastTapMM.y) <= self.doubleTapZoneMM;
+        _hasLastTap = NO;
         _session = s;
         [events addObject:TUCWrapEvent(TUCEventAt(TUCGestureKindTouchBegan, contacts[0].point))];
     }
@@ -265,7 +289,7 @@ static const NSInteger TUCMaxSwipeFingers = 4;  // more fingers than this do not
         }
 
         if (s->settledCount == 1 && rawCount == 1 && !s->multiTouched) {
-            [self oneFinger:s contact:contacts[0] now:now events:events];
+            [self oneFinger:s contact:contacts[0] now:now pointsPerMM:pointsPerMM events:events];
         } else if (s->settledCount == 2 && rawCount == 2 && tracked == 2) {
             [self twoFingers:s contacts:contacts now:now screenWidthMM:screenWidthMM pointsPerMM:pointsPerMM events:events];
         } else if (s->settledCount >= 3 && rawCount == s->settledCount && !s->multiDone) {
@@ -284,26 +308,71 @@ static const NSInteger TUCMaxSwipeFingers = 4;  // more fingers than this do not
 
 #pragma mark One finger
 
-- (void)oneFinger:(TUCGestureSession *)s contact:(TUCContact)c now:(double)now events:(NSMutableArray<NSValue *> *)events {
+// As on a tablet: a finger that moves scrolls what is under it; a finger that rests first presses there (press and hold),
+// and moving it after that drags.
+- (void)oneFinger:(TUCGestureSession *)s contact:(TUCContact)c now:(double)now pointsPerMM:(double)pointsPerMM events:(NSMutableArray<NSValue *> *)events {
+    if (s->oneScrolling) {
+        if (c.identifier != s->scrollID) {
+            // The scrolling finger lifted while another, which landed meanwhile, stays: carry on with that one from where
+            // it is, without a jump.
+            s->scrollID = c.identifier;
+            s->lastScrollPoint = c.point;
+            return;
+        }
+        CGVector d = CGVectorMake(c.point.x - s->lastScrollPoint.x, c.point.y - s->lastScrollPoint.y);
+        if (d.dx != 0 || d.dy != 0) {
+            TUCGestureEvent e = TUCEventAt(TUCGestureKindScroll, c.point);
+            e.delta = d;
+            e.value = pointsPerMM;
+            [events addObject:TUCWrapEvent(e)];
+            s->lastScrollPoint = c.point;
+        }
+        return;
+    }
+
     NSNumber *key = @(c.identifier);
     TUCContact o = TUCContactFromValue(s.landed[key]);
     double held = now - s.landedAt[key].doubleValue;
     double travel = hypot(c.mm.x - o.mm.x, c.mm.y - o.mm.y);
 
-    if (travel >= self.dragSlopMM) {
-        // The finger moved: press where it landed and catch up to where it is, so the drag starts on its target.
+    if (travel >= self.dragSlopMM && s->afterTap) {
+        // Double-tap and drag: press where it landed and catch up to where it is, so the drag starts on its target. It
+        // counts as the tap's next click, so in text it selects word by word.
         s->dragging = YES;
         s->dragID = c.identifier;
-        [events addObject:TUCWrapEvent(TUCEventAt(TUCGestureKindDragBegan, o.point))];
+        TUCGestureEvent began = TUCEventAt(TUCGestureKindDragBegan, o.point);
+        began.value = 1;
+        [events addObject:TUCWrapEvent(began)];
         [events addObject:TUCWrapEvent(TUCEventAt(TUCGestureKindDragMoved, c.point))];
         s->lastDragPoint = c.point;
+    } else if (travel >= self.dragSlopMM) {
+        // The finger moved before the long press: scroll from here on. As with two fingers, the travel spent deciding
+        // is not caught up in one jump; the content follows the finger from this point.
+        s->oneScrolling = YES;
+        s->scrollID = c.identifier;
+        s->lastScrollPoint = c.point;
+        NSValue *previous = s.last[key];
+        CGPoint prev = previous ? TUCContactFromValue(previous).point : c.point;
+        TUCGestureEvent e = TUCEventAt(TUCGestureKindScroll, c.point);
+        e.delta = CGVectorMake(c.point.x - prev.x, c.point.y - prev.y);
+        e.value = pointsPerMM;
+        [events addObject:TUCWrapEvent(e)];
     } else if (held >= self.longPressSeconds) {
-        // Press and hold (a Dock icon's menu, a button that repeats while held).
+        // Press and hold (a Dock icon's menu, a button that repeats while held); moving after it drags (drag and drop,
+        // selecting text, moving a window).
         s->dragging = YES;
         s->dragID = c.identifier;
         [events addObject:TUCWrapEvent(TUCEventAt(TUCGestureKindDragBegan, o.point))];
         s->lastDragPoint = o.point;
     }
+}
+
+/// Close a one-finger scroll (more fingers settled, or all lifted). Momentum carries on as after a two-finger scroll.
+- (void)endOneFingerScroll:(TUCGestureSession *)s events:(NSMutableArray<NSValue *> *)events {
+    if (!s->oneScrolling) return;
+    s->oneScrolling = NO;
+    s->gestureSeen = YES;
+    [events addObject:TUCWrapEvent(TUCEvent(TUCGestureKindScrollEnd))];
 }
 
 /// A one-finger drag follows the finger that began it, whatever other fingers do, until it lifts.
@@ -345,6 +414,7 @@ static const NSInteger TUCMaxSwipeFingers = 4;  // more fingers than this do not
         return;
     }
 
+    [self endOneFingerScroll:s events:events];
     [self endTwoFinger:s events:events];
 
     // Three fingers land a moment before the fourth and are, for that moment, a three-finger swipe: when the fourth
@@ -629,6 +699,7 @@ static const NSInteger TUCMaxSwipeFingers = 4;  // more fingers than this do not
     }
 
     [result addObjectsFromArray:[self endMulti:s]];
+    [self endOneFingerScroll:s events:result];
     [self endTwoFinger:s events:result];
     if (result.count > 0 || s->multiDone || s->gestureSeen) {
         return result;  // it was a gesture, not a tap

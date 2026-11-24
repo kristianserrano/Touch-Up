@@ -12,10 +12,10 @@ The goal of Touch Up was to provide a simple, general-purpose driver that enable
 The code in this repository provides a user-space driver that reads and processes the HID data into a set of touches, recognises gestures in them, and posts them as mouse and native trackpad events.
 
 ## What can you do with this App?
-The Magic Touch Up **utility app** allows you to control your Mac with any connected touch screen. One finger works directly on what it touches; two or more fingers use the same gestures as a Magic Trackpad, posted as native trackpad events:
+The Magic Touch Up **utility app** allows you to control your Mac with any connected touch screen. One finger works like on a tablet; two or more fingers use the same gestures as a Magic Trackpad, posted as native trackpad events:
 
-- **One finger**: tap to click where you touch; move to drag (select text, move windows); rest the finger to press and hold
-- **Two fingers**: scroll with momentum and trackpad-style acceleration, pinch to zoom, rotate, tap for a secondary click, double-tap for smart zoom, swipe in from the right edge for Notification Center
+- **One finger**, as on a tablet: tap to click where you touch; slide to scroll, with momentum; touch and hold to press, then move to drag (drag and drop, select text, move windows), or double-tap and drag to drag at once (selects text word by word)
+- **Two fingers**: scroll as with one, pinch to zoom, rotate, tap for a secondary click, double-tap for smart zoom, swipe in from the right edge for Notification Center
 - **Three or four fingers**: swipe between full-screen apps, swipe up for Mission Control and down for App Exposé (four fingers by default), swipe between pages (off by default), three-finger tap to Look Up (off by default)
 - **Four fingers**: pinch for Launchpad, spread for Show Desktop
 

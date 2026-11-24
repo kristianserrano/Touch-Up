@@ -94,7 +94,7 @@ do {
     var s = GestureSettings.defaults
     s.SwipeBetweenDesktops = false
     check(resolve(&s, "SwipeBetweenDesktops").isEmpty, "disabling turns nothing off")
-    check(resolve(&s, "Zoom").isEmpty && resolve(&s, "ScrollDirection").isEmpty, "non-gesture settings turn nothing off")
+    check(resolve(&s, "Zoom").isEmpty && resolve(&s, "ScrollMomentum").isEmpty, "non-gesture settings turn nothing off")
 }
 
 // Mission Control and App Exposé share a finger count; whichever changed wins.

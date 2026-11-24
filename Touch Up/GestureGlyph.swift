@@ -16,7 +16,6 @@ import SwiftUI
 struct Glyph: Equatable {
     // As the catalog names them.
     enum Motion: String { case tap, double, hold, horizontal, vertical, up, down, edge, rotate, zoom, pinch, spread }
-    enum ScrollBar: String { case natural, standard }
 
     /// What the screen shows the gesture doing.
     enum Scene: String {
@@ -30,8 +29,6 @@ struct Glyph: Equatable {
     /// A second set of fingers taking turns with the first ("two or three-finger swipe", the scroll's up then down).
     var alt: Int? = nil
     var altReverse = false
-    /// The scroll direction: whether the content goes with the fingers or against them.
-    var scrollBar: ScrollBar? = nil
 
     /// The idle desktop: a gesture that is off.
     static let off = Glyph(fingers: 0, motion: .tap)
@@ -387,10 +384,9 @@ private struct ScreenPainter {
 
         case .scroll:
             drawWallpaper(in: &context)
-            // Natural: the content goes with the fingers, so it stays under them; standard: the other way.
+            // The content goes with the fingers, so it stays under them.
             let along = still ? 0.0 : Keyframes.scroll.sample(phase(loopLong))[0]
-            let sign = glyph.scrollBar == .standard ? 1.0 : -1.0
-            drawPage(pageWindow, offset: CGSize(width: 0, height: sign * along * scrollTravel * 1.7), scrollBar: along, in: &context)
+            drawPage(pageWindow, offset: CGSize(width: 0, height: -along * scrollTravel * 1.7), scrollBar: along, in: &context)
             drawChrome(in: &context)
 
         case .zoom:
@@ -596,7 +592,7 @@ private struct ScreenPainter {
         if let scrollBar {
             let track = CGRect(x: inner.maxX - 3, y: inner.minY + 1, width: 1.6, height: inner.height - 2)
             let thumbHeight = track.height * 0.35
-            let thumbY = track.minY + (track.height - thumbHeight) * (glyph.scrollBar == .standard ? 1 - scrollBar : scrollBar)
+            let thumbY = track.minY + (track.height - thumbHeight) * scrollBar
             context.fill(Path(roundedRect: CGRect(x: track.minX, y: thumbY, width: track.width, height: thumbHeight), cornerRadius: 0.8),
                          with: .color(ink.opacity(0.45)))
         }

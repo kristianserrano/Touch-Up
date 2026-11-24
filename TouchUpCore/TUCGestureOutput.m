@@ -84,7 +84,7 @@ static CGEventFlags TUCHeldClickModifiers(void) {
             break;
 
         case TUCGestureKindDragBegan:
-            [self pressAt:e.point];
+            [self pressAt:e.point followingTap:e.value > 0];
             break;
 
         case TUCGestureKindDragMoved:
@@ -208,9 +208,14 @@ static CGEventFlags TUCHeldClickModifiers(void) {
     [self postMouse:kCGEventLeftMouseUp at:p button:kCGMouseButtonLeft clickState:state];
 }
 
-- (void)pressAt:(CGPoint)p {
+/// followingTap: double-tap and drag, so the press is the tap's next click (a double-click drag selects by word);
+/// otherwise a press and hold, which starts a click count of its own.
+- (void)pressAt:(CGPoint)p followingTap:(BOOL)followingTap {
     if (_buttonDown) return;  // a second press would take the first over and stick
-    _clickState = [self.clicks pressForDragAt:p now:TUCUptimeSeconds()];
+    self.clicks.radiusPoints = self.doubleClickTolerancePoints;
+    self.clicks.intervalSeconds = [NSEvent doubleClickInterval];
+    double now = TUCUptimeSeconds();
+    _clickState = followingTap ? [self.clicks pressAt:p now:now] : [self.clicks pressForDragAt:p now:now];
     _buttonDown = YES;
     _buttonPoint = p;
     [self moveCursorTo:p];
@@ -290,9 +295,8 @@ static CGEventFlags TUCHeldClickModifiers(void) {
 - (void)wheelsFor:(CGVector)d speed:(double)pointsPerSecond wheel1:(int32_t *)wheel1 wheel2:(int32_t *)wheel2 {
     double ppmm = self.momentum.pointsPerMM > 0 ? self.momentum.pointsPerMM : TUCFallbackPointsPerMM;
     double gain = TUCScrollBoost(pointsPerSecond / ppmm);
-    double sign = (self.settings.naturalScrolling ? 1.0 : -1.0) * gain;
-    _carryX += d.dx * sign;
-    _carryY += d.dy * sign;
+    _carryX += d.dx * gain;
+    _carryY += d.dy * gain;
     *wheel2 = (int32_t)trunc(_carryX);
     *wheel1 = (int32_t)trunc(_carryY);
     _carryX -= *wheel2;

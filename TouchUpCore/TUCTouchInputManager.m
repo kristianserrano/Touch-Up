@@ -251,7 +251,10 @@ static const NSTimeInterval TUCQuietTimeout = 0.07;
     double now = TUCUptimeSeconds();
     self.output.doubleClickTolerancePoints = self.doubleClickTolerance * pointsPerMM;
 
-    NSArray<NSValue *> *events = [[self recognizerForLocationID:locationID] handleContacts:contacts
+    TUCGestureRecognizer *recognizer = [self recognizerForLocationID:locationID];
+    recognizer.doubleTapZoneMM = self.doubleClickTolerance;
+    recognizer.doubleTapSeconds = [NSEvent doubleClickInterval];
+    NSArray<NSValue *> *events = [recognizer handleContacts:contacts
                                                                                      count:count
                                                                                       time:now
                                                                              screenWidthMM:physical.width

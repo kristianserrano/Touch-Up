@@ -8,8 +8,10 @@
 //  which follows the Magic Trackpad: a touch "session" runs from first contact down to all contacts up, and behaviour
 //  follows the *settled* finger count, so fingers landing a moment apart never change the mode.
 //
-//   - 1 finger: direct manipulation. A tap clicks where the finger touched; moving past the drag slop (or holding still
-//     for the long-press time) presses the left button there and drags with the finger.
+//   - 1 finger: as on a tablet. A tap clicks where the finger touched; moving past the slop scrolls what is under it;
+//     holding still for the long-press time presses the left button there, and moving after that drags. A finger that
+//     lands where the last tap was, within the double-click time, and moves drags at once (double-tap and drag: in text,
+//     it selects word by word).
 //   - 2 fingers: scroll, pinch (zoom), rotate, swipe between pages, or an edge swipe from the right (Notification
 //     Center), decided once from net motion and latched. A tap is a secondary click (a double tap is smart zoom).
 //   - 3-4 fingers: swipes (full-screen apps, Mission Control, App Exposé; 4-finger pinch for Launchpad and Show
@@ -25,11 +27,11 @@ NS_ASSUME_NONNULL_BEGIN
 
 typedef NS_ENUM(NSInteger, TUCGestureKind) {
     TUCGestureKindTouchBegan,  // point: where the first finger landed
-    TUCGestureKindDragBegan,   // point: where the button goes down
+    TUCGestureKindDragBegan,   // point: where the button goes down; value 1 if it follows a tap (counts as the next click)
     TUCGestureKindDragMoved,   // point
     TUCGestureKindDragEnded,   // point: where the button comes up
     TUCGestureKindTap,         // fingers, point
-    TUCGestureKindScroll,      // delta (points, +right/+down finger movement), point (pair midpoint), value = points per mm
+    TUCGestureKindScroll,      // delta (points, +right/+down finger movement), point (finger or pair midpoint), value = points per mm
     TUCGestureKindScrollEnd,
     TUCGestureKindPinch,       // value: multiplicative scale since the last event, point (midpoint)
     TUCGestureKindPinchEnd,
@@ -63,7 +65,7 @@ typedef struct {
 
 @property double settleSeconds;          // how long a finger count must hold to count...
 @property NSInteger settleFrames;        // ...or for this many reports, whichever comes first (fast screens settle sooner)
-@property double dragSlopMM;             // one finger travelling this far presses the button and drags
+@property double dragSlopMM;             // one finger travelling this far (before the long press) scrolls; less is a tap
 @property double longPressSeconds;       // one finger held still this long presses the button (press and hold)
 @property double tapMaxDuration;         // seconds, for two- and three-finger taps
 @property double tapMaxTravelMM;         // for two- and three-finger taps
@@ -75,6 +77,8 @@ typedef struct {
 @property double multiPinchBias;         // four or more fingers: the same, lower (a thumb closing on three fingers moves the centroid)
 @property double dragUpgradeSeconds;     // a three-finger swipe this young that gets a fourth finger was a four-finger one
 @property double tapLandingSeconds;      // fingers down together within this long of the first count for a quick tap
+@property double doubleTapSeconds;       // a finger landing this soon after a one-finger tap...
+@property double doubleTapZoneMM;        // ...and this close to it drags when it moves, instead of scrolling
 
 #pragma mark Switches (from the settings)
 

@@ -21,9 +21,10 @@ typedef NS_ENUM(NSInteger, TUCPagesTrigger) {
 
 #pragma mark Scrolling
 
-/// Content follows the fingers. Off: the opposite, like a scroll wheel.
-@property BOOL naturalScrolling;
-/// A two-finger scroll keeps coasting for a moment after the fingers lift.
+// Scrolling is always natural (the content follows the fingers): on a screen, anything else would pull it away from
+// under them.
+
+/// A scroll keeps coasting for a moment after the fingers lift.
 @property BOOL scrollMomentum;
 
 #pragma mark Point & Click

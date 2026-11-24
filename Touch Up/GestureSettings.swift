@@ -8,8 +8,6 @@
 
 import Foundation
 
-enum ScrollDirectionChoice: String, Codable, CaseIterable { case Natural, Standard }
-
 enum PagesTriggerChoice: String, Codable, CaseIterable { case TwoFingerScroll, TwoOrThreeFingerSwipe, ThreeFingerSwipe }
 
 enum SwipeFingerCount: String, Codable, CaseIterable {
@@ -34,8 +32,7 @@ enum SettingValue: Equatable {
 }
 
 struct GestureSettings: Codable, Equatable {
-    // Scrolling
-    var ScrollDirection: ScrollDirectionChoice = .Natural
+    // Scrolling (always natural: the content follows the fingers)
     var ScrollMomentum = true
 
     // Pointing and clicking
@@ -71,7 +68,6 @@ struct GestureSettings: Codable, Equatable {
         func read<T: Decodable>(_ key: CodingKeys, _ value: inout T) {
             if let v = try? c.decodeIfPresent(T.self, forKey: key) { value = v }
         }
-        read(.ScrollDirection, &ScrollDirection)
         read(.ScrollMomentum, &ScrollMomentum)
         read(.SecondaryClick, &SecondaryClick)
         read(.LookUp, &LookUp)
@@ -95,14 +91,13 @@ struct GestureSettings: Codable, Equatable {
     // MARK: Access by name
 
     static let names: [String] = [
-        "ScrollDirection", "ScrollMomentum", "SecondaryClick", "LookUp", "Zoom", "SmartZoom", "Rotate",
+        "ScrollMomentum", "SecondaryClick", "LookUp", "Zoom", "SmartZoom", "Rotate",
         "NotificationCenter", "SwipeBetweenPages", "PagesTrigger", "SwipeBetweenDesktops", "DesktopsFingers",
         "MissionControl", "MissionControlFingers", "AppExpose", "AppExposeFingers", "Launchpad", "ShowDesktop",
     ]
 
     subscript(name: String) -> SettingValue? {
         switch name {
-        case "ScrollDirection": return .string(ScrollDirection.rawValue)
         case "ScrollMomentum": return .bool(ScrollMomentum)
         case "SecondaryClick": return .bool(SecondaryClick)
         case "LookUp": return .bool(LookUp)
@@ -129,7 +124,6 @@ struct GestureSettings: Codable, Equatable {
     @discardableResult
     mutating func set(_ name: String, to value: SettingValue) -> Bool {
         switch (name, value) {
-        case ("ScrollDirection", .string(let v)): guard let e = ScrollDirectionChoice(rawValue: v) else { return false }; ScrollDirection = e
         case ("ScrollMomentum", .bool(let v)): ScrollMomentum = v
         case ("SecondaryClick", .bool(let v)): SecondaryClick = v
         case ("LookUp", .bool(let v)): LookUp = v
@@ -164,7 +158,6 @@ struct GestureSettings: Codable, Equatable {
         func fingers(_ key: String, _ fallback: SwipeFingerCount) -> SwipeFingerCount {
             switch int(key) { case 3: .Three; case 4: .Four; default: fallback }
         }
-        s.ScrollDirection = bool("gesture.naturalScrolling", true) ? .Natural : .Standard
         s.ScrollMomentum = bool("gesture.scrollMomentum", s.ScrollMomentum)
         s.SecondaryClick = bool("gesture.secondaryClick", s.SecondaryClick)
         s.LookUp = bool("gesture.lookUp", s.LookUp)

@@ -9,7 +9,6 @@
 
 - (instancetype)init {
     if (self = [super init]) {
-        _naturalScrolling = YES;
         _scrollMomentum = YES;
 
         _secondaryClick = YES;
@@ -53,7 +52,6 @@
 
 - (id)copyWithZone:(NSZone *)zone {
     TUCGestureSettings *c = [[[self class] allocWithZone:zone] init];
-    c.naturalScrolling = self.naturalScrolling;
     c.scrollMomentum = self.scrollMomentum;
     c.secondaryClick = self.secondaryClick;
     c.lookUp = self.lookUp;

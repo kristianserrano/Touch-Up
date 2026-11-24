@@ -44,9 +44,8 @@ struct GlyphSpec {
     var scene: Glyph.Scene = .desktop
     var alt: Int? = nil
     var altReverse = false
-    /// The setting that decides the finger count (a SwipeFingerCount), the scroll direction, or which of `cases`.
+    /// The setting that decides the finger count (a SwipeFingerCount), or which of `cases`.
     var fingersFrom: String? = nil
-    var scrollBarFrom: String? = nil
     var by: String? = nil
     var cases: [String: GlyphSpec]? = nil
 
@@ -59,8 +58,7 @@ struct GlyphSpec {
             motion: motion,
             scene: scene,
             alt: alt,
-            altReverse: altReverse,
-            scrollBar: scrollBarFrom.flatMap { Glyph.ScrollBar(rawValue: settings($0)?.string?.lowercased() ?? "") })
+            altReverse: altReverse)
     }
 }
 
@@ -109,7 +107,7 @@ enum SettingsCatalog {
         SettingsPane(id: "pointing", title: "Pointing and Clicking", symbol: "cursorarrow.click", groups: [
             SettingGroup(id: "click", title: "Click", symbol: "hand.tap",
                          text: "Tap with one finger to click right where you touch. Tap twice to double-click.",
-                         note: "Two taps this close together count as a double-click.",
+                         note: "Two taps this close together count as a double-click, and a tap then a touch that moves here drags.",
                          controls: [.measure(name: ParameterName.doubleClickDistance, label: "Double-click zone", range: 0...8, step: 1, format: "%.0f mm")],
                          glyph: GlyphSpec(fingers: 1, motion: .tap, scene: .click)),
             SettingGroup(id: "secondary", title: "Secondary click", symbol: "contextualmenu.and.cursorarrow", toggle: "SecondaryClick",
@@ -121,27 +119,23 @@ enum SettingsCatalog {
                          note: "Sends the macOS shortcut Control-Command-D.",
                          glyph: GlyphSpec(fingers: 3, motion: .tap, scene: .lookUp)),
             SettingGroup(id: "drag", title: "Drag & drop", symbol: "hand.draw",
-                         text: "Touch an item and move your finger to drag it to a new location. Rest your finger on it to press and hold, for menus that open on a long press.",
-                         note: "Lifting before the finger has moved past the threshold is a click. Increase it if taps turn into small drags.",
+                         text: "Touch and hold an item, then move your finger to drag it to a new location. Holding also selects text as you move, and opens menus that appear on a long press.",
+                         note: "Moving before the delay is up scrolls instead. To drag without waiting, tap and then touch the same spot again and move: in text, this selects word by word.",
                          controls: [
-                            .measure(name: ParameterName.dragThreshold, label: "Drag threshold", range: 1...8, step: 0.5, format: "%.1f mm"),
                             .measure(name: ParameterName.longPressDuration, label: "Press and hold delay", range: 0.2...1.5, step: 0.1, format: "%.1f s"),
                          ],
                          glyph: GlyphSpec(fingers: 1, motion: .hold, scene: .drag)),
         ]),
         SettingsPane(id: "two", title: "Scroll and Zoom", symbol: "scroll", groups: [
-            SettingGroup(id: "scroll", title: "Two-finger scroll", symbol: "arrow.up.and.down",
-                         text: "Use two fingers by sliding horizontally or vertically to scroll through content.",
-                         note: "Natural: the content follows your fingers. A slow stroke keeps it right under them; a fast one sends it further, as on a trackpad.",
+            SettingGroup(id: "scroll", title: "Scroll", symbol: "arrow.up.and.down",
+                         text: "Slide one or two fingers horizontally or vertically to scroll through content. The content follows your fingers.",
+                         note: "A slow stroke keeps the content right under your fingers; a fast one sends it further. Lifting before the finger has moved past the threshold is a click: increase it if taps turn into small scrolls.",
                          controls: [
-                            .picker(name: "ScrollDirection", label: "Scroll direction", options: [
-                                Option(value: "Standard", label: "Standard"),
-                                Option(value: "Natural", label: "Natural"),
-                            ]),
+                            .measure(name: ParameterName.dragThreshold, label: "Scroll threshold", range: 1...8, step: 0.5, format: "%.1f mm"),
                             .toggle(name: "ScrollMomentum", label: "Momentum",
                                     text: "Keep scrolling for a moment after your fingers lift. Touching the screen stops it."),
                          ],
-                         glyph: GlyphSpec(fingers: 2, motion: .vertical, scene: .scroll, alt: 2, altReverse: true, scrollBarFrom: "ScrollDirection")),
+                         glyph: GlyphSpec(fingers: 1, motion: .vertical, scene: .scroll, alt: 2, altReverse: true)),
             SettingGroup(id: "zoom", title: "Zoom", symbol: "plus.magnifyingglass", toggle: "Zoom",
                          text: "Two-finger pinch in/out on the screen to enlarge or reduce your view.",
                          glyph: GlyphSpec(fingers: 2, motion: .zoom, scene: .zoom)),
@@ -205,7 +199,7 @@ enum SettingsCatalog {
     }
 
     /// A card's summary: a group with a switch says its choice (short wording, or Off, or On); one without says its controls
-    /// ("Natural").
+    /// ("Scroll threshold: 3.0 mm").
     static func summary(_ group: SettingGroup, in settings: (String) -> SettingValue?) -> String {
         if let toggle = group.toggle {
             guard settings(toggle)?.bool == true else { return group.offLabel }

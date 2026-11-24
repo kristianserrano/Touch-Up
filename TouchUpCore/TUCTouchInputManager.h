@@ -33,7 +33,8 @@ NS_ASSUME_NONNULL_BEGIN
 
 
 /**
- The maximal distance in mm that two taps may be apart from each other to count as double click
+ The maximal distance in mm that two taps may be apart from each other to count as double click, or a tap and the touch
+ after it to count as double-tap and drag. The default value is 5 mm.
  */
 @property CGFloat doubleClickTolerance;
 
@@ -44,8 +45,8 @@ NS_ASSUME_NONNULL_BEGIN
 @property (nonatomic) NSTimeInterval longPressDuration;
 
 /**
- How far in mm one finger has to travel before it presses the mouse button and drags.
- Below this, lifting the finger is a click. The default value is 3 mm.
+ How far in mm one finger has to travel, before the press and hold time is up, to scroll (or to drag, if it follows a
+ tap at the same spot). Below this, lifting the finger is a click. The default value is 3 mm.
  */
 @property (nonatomic) CGFloat dragThreshold;
 
@@ -62,7 +63,7 @@ NS_ASSUME_NONNULL_BEGIN
 @property CGFloat edgeDeadZone;
 
 /**
- If a touch is no longer reported by the screen, wait for this number of incoming reports bevore deleting it from the touch set.
+ If a touch is no longer reported by the screen, wait for this number of incoming reports before deleting it from the touch set.
  */
 @property NSInteger errorResistance;
 

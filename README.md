@@ -1,48 +1,131 @@
 # Magic Touch Up
+
 **Magic Trackpad gestures for any touchscreen on macOS**
-<hr/>
+
+Most touchscreens work with Windows out of the box because they report touches in a standard way over USB HID. Connected
+to a Mac, they usually do little or nothing. Magic Touch Up is a menu bar app that reads those reports, recognises
+gestures in them, and posts them as mouse and native trackpad events. It runs in user space: there is no kernel
+extension to install.
 
 > Magic Touch Up is a fork of [Touch Up](https://github.com/shueber/Touch-Up) by Sebastian Hueber, rewritten around
-> Magic Trackpad style gestures, a new settings window, and fixes for touchscreens that report oddly. It is not
+> Magic Trackpad style gestures, with a new settings window and fixes for touchscreens that report oddly. It is not
 > affiliated with the original project or with Apple. The touch-reading core and the TouchUpCore framework come from
 > Touch Up; thanks to Sebastian for making it open source.
 
-Most current touchscreens work with Microsoft Windows out-of-the-box as they implement a standardized communication via USB HID. However, nothing happens when connecting these screens to a Mac.
-The goal of Touch Up was to provide a simple, general-purpose driver that enables plug-and-play support for touchscreens on macOS. 
-The code in this repository provides a user-space driver that reads and processes the HID data into a set of touches, recognises gestures in them, and posts them as mouse and native trackpad events.
+## Gestures
 
-## What can you do with this App?
-The Magic Touch Up **utility app** allows you to control your Mac with any connected touch screen. One finger works like on a tablet; two or more fingers use the same gestures as a Magic Trackpad, posted as native trackpad events:
+One finger works as on a tablet. Two or more work as on a Magic Trackpad.
 
-- **One finger**, as on a tablet: tap to click where you touch; slide to scroll, with momentum; touch and hold to press, then move to drag (drag and drop, select text, move windows), or double-tap and drag to drag at once (selects text word by word)
-- **Two fingers**: scroll as with one, pinch to zoom, rotate, tap for a secondary click, double-tap for smart zoom, swipe in from the right edge for Notification Center
-- **Three or four fingers**: swipe between full-screen apps, swipe up for Mission Control and down for App Exposé (four fingers by default), swipe between pages (off by default), three-finger tap to Look Up (off by default)
-- **Four fingers**: pinch for Launchpad, spread for Show Desktop
+| Fingers | Gesture | What it does | Default |
+| --- | --- | --- | --- |
+| 1 | Tap | Click where you touch; tap twice to double-click | Always on |
+| 1 | Slide | Scroll | Always on |
+| 1 | Touch and hold | Press the (left) mouse button; move to drag items, select text or move windows | Always on |
+| 1 | Double-tap and drag | Drag without waiting; in text, selects word by word | Always on |
+| 2 | Slide | Scroll | Always on |
+| 2 | Tap | Secondary click | On |
+| 2 | Double-tap | Smart zoom | On |
+| 2 | Pinch | Zoom | On |
+| 2 | Turn | Rotate | On |
+| 2 | Swipe in from the right edge | Notification Center | On |
+| 3 | Tap | Look up & data detectors (sends Control-Command-D) | Off |
+| 2 or 3 | Swipe left or right | Swipe between pages | Off |
+| 3 or 4 | Swipe left or right | Swipe between full-screen apps | On, 4 fingers |
+| 3 or 4 | Swipe up | Mission Control | On, 4 fingers |
+| 3 or 4 | Swipe down | App Exposé | On, 4 fingers |
+| 4 | Pinch | Launchpad | On |
+| 4 | Spread | Show desktop | On |
 
-Every gesture and its finger count can be changed in the settings window; gestures that would share a trigger are moved apart, as in System Settings › Trackpad. Each touchscreen's display and real size are set in the Touchscreens pane.
-The gesture recognition and the native event layout are ported from the T650Native touchpad driver; `Tests/run-tests.sh` runs the tests for the gesture logic.
+Scrolling always follows your fingers, and by default coasts for a moment after they lift. Touch the screen to stop it.
 
+## Install
 
-### Installing the App
-- Build the app in Xcode (put your signing team in `Config/Local.xcconfig`, see `Config/Shared.xcconfig`). The
-  original Touch Up's [notarized builds](https://github.com/shueber/Touch-Up/releases) do not include this fork's changes.
-- If you wish, move the app into your Applications folder and add it as a Login item.
-- Launch it and allow Accessibility access (and Input Monitoring if macOS asks).
-- Plug in your touchscreen and start touching.
+There are no prebuilt downloads of this fork yet, so you build it yourself. The original project's
+[releases](https://github.com/shueber/Touch-Up/releases) do not include this fork's changes.
 
+You need macOS 14 or later and Xcode (last built with Xcode 26.3).
 
-### Compatibility
-Magic Touch Up should work with any touchscreen that also works with Windows. If gestures feel wrong, check the
-screen's size in Settings › Touchscreens: some screens report a wrong one.
-We used the following screens for testing:
+1. Clone the repository:
 
-- Iiyama TF3222MC and T2336MSC-B2
-- 3M C4667PW
+   ```sh
+   git clone https://github.com/kristianserrano/Touch-Up.git
+   cd Touch-Up
+   ```
 
+2. Create `Config/Local.xcconfig` with your signing team, which git ignores. Your team ID is in
+   Xcode › Settings › Accounts:
 
+   ```
+   DEVELOPMENT_TEAM = ABCDE12345
+   ```
 
+   Without a team, choose **Sign to Run Locally** in the targets' Signing & Capabilities tab.
 
-## The *TouchUpCore* Framework
-Game developers, researchers, and others who need access to all touch data can also benefit from this project by integrating the TouchUpCore **framework** themselves. It provides simple access to all touches recognized on the touch surface, simplifying multitouch prototype development in macOS.
+3. Open `Touch Up.xcodeproj` and run the **Touch Up** scheme. The app it builds is called **Magic Touch Up**. It has no
+   Dock icon; look for it in the menu bar.
+4. Allow Accessibility access when asked, and Input Monitoring if macOS asks for it. Without Accessibility access,
+   macOS silently drops every click and gesture.
+5. Plug in your touchscreen and start touching.
 
-The Magic Touch Up app itself is an example of integrating the TouchUpCore framework. You can have a look at the *DebugView* to see how you can visualize the different touch points. Remember that your app needs an Entitlement to access USB if running in the Sandbox.
+To keep the app, move it to your Applications folder. To start it when you log in, add it in
+System Settings › General › Login Items.
+
+## Settings
+
+Choose **Settings…** from the menu bar icon. Changes are saved as you make them.
+
+| Pane | What you can change |
+| --- | --- |
+| **Pointing and Clicking** | Double-click zone, secondary click, look up, press and hold delay |
+| **Scroll and Zoom** | Scroll threshold, momentum, zoom, smart zoom, rotate |
+| **Gestures** | Notification Center, swipes, Mission Control, App Exposé, Launchpad, show desktop |
+| **Touchscreens** | Which display each touchscreen is on, its real size, touch rotation, and advanced options |
+
+- Two gestures cannot share a trigger. If a change would make them clash, the window shows what else would change and
+  asks first.
+- Mission Control and App Exposé always use the same number of fingers.
+- **Reset to Defaults…** resets the gesture, click and drag settings and keeps your touchscreen settings.
+- To pause the app, turn off **Control Mouse with Touch** in its menu. Touch is on again the next time the app starts.
+
+## Troubleshooting
+
+Start in **Settings › Touchscreens**. **Test…** shows the touches as the app reads them.
+
+| Problem | Try |
+| --- | --- |
+| Touches show in the test but do nothing | Check that Accessibility access is granted and **Control mouse with touch** is on |
+| Touches land on the wrong display | Select the display you touched, then choose your touchscreen in the **Touchscreen** menu |
+| Touches land in the wrong place on the right display | Change **Touch rotation** |
+| Gestures need too much or too little movement | Choose the real **Screen Size**; some displays report a wrong one |
+| Taps turn into small scrolls | Increase **Scroll threshold** in Scroll and Zoom |
+| A secondary click feels slow | Turn off **Smart zoom**, so a two-finger tap need not wait for a second tap |
+| Touches flicker or drop out | Increase **Error resistance** in Advanced… |
+| Stray touches in the top-left corner | Turn on **Ignore origin touches** in Advanced… (on by default) |
+| Stray clicks from macOS also treating the screen as a mouse | Turn on **Exclusive access** in Advanced… |
+| Touches near the edges land on the edge itself | Increase **Edge dead zone** in Advanced… |
+
+## Compatibility
+
+Magic Touch Up should work with any touchscreen that also works with Windows. These have been tested:
+
+- JRP7813S 7″ 1024 × 600 (USB2IIC_CTP_CONTROL), with this fork. Set its Screen Size to 7″: it reports 31″.
+- Iiyama TF3222MC and T2336MSC-B2, and 3M C4667PW, with the original Touch Up
+
+The native gestures rely on event fields Apple does not document, so a macOS update can break them.
+
+## The TouchUpCore framework
+
+Apps that need the raw touches (games, research, multitouch prototypes) can use the TouchUpCore framework directly.
+See [Using TouchUpCore](docs/DEVELOPMENT.md#using-touchupcore).
+
+## Development
+
+[docs/DEVELOPMENT.md](docs/DEVELOPMENT.md) covers how the code is organised, how to run the tests, and how to record
+touches from a screen that misbehaves.
+
+## Credits and license
+
+Touch Up was created by [Sebastian Hueber](https://github.com/shueber/Touch-Up). The gesture recognition, the native
+event layout and the settings window are ported from the T650Native touchpad driver.
+
+Released under the [MIT License](LICENSE).

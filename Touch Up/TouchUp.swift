@@ -26,7 +26,7 @@ class TouchUp: NSObject, ObservableObject {
     @Published var connectionState: ConnectionState = .disconnected
     
     @Published var longPressDuration = ParameterDefaults.longPressDuration     // s one finger rests before it presses
-    @Published var dragThreshold = ParameterDefaults.dragThreshold             // mm one finger travels before it drags
+    @Published var dragThreshold = ParameterDefaults.dragThreshold             // mm one finger travels before it scrolls
     @Published var doubleClickDistance = ParameterDefaults.doubleClickDistance // mm two taps may be apart to double-click
     @Published var edgeDeadZone = ParameterDefaults.edgeDeadZone               // pt along the screen edges never posted
     @Published var errorResistance = ParameterDefaults.errorResistance         // reports to wait before cancelling a touch

@@ -491,7 +491,7 @@ static const double TUCVelocityMinSpan = 0.02; // a single sample is taken as at
 // slow end stops quickly. (T650Native's ScrollMomentum; its 1000 px/s at 7 px per mm is 143 mm/s.)
 static const double TUCMomentumTimeConstant = 0.22;   // seconds, at the reference speed
 static const double TUCMomentumReferenceSpeed = 143;  // mm/s
-static const double TUCMomentumSpeedPower = 0.2;      // 0 would be a plain exponential
+static const double TUCMomentumSpeedPower = 0.2;      // must be above 0; towards 0 it nears a plain exponential
 static const double TUCMomentumStartSpeed = 27;       // mm/s the fingers need to start coasting
 static const double TUCMomentumStopSpeed = 4.3;       // mm/s: below this it has come to rest
 
